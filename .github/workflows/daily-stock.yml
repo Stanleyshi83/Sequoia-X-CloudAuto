@@ -22,19 +22,33 @@ jobs:
         run: |
           pip install baostock pandas numpy requests python-dotenv pydantic-settings rich tqdm tenacity
 
+      # 加载缓存：缓存data目录（sqlite数据库）
+      - name: 加载数据库缓存
+        uses: actions/cache@v4
+        with:
+          path: data
+          key: sequoia-db-v1
+
+      # 判断缓存是否存在，不存在就执行全量backfill；存在则跳过回填，直接运行
+      - name: 数据回填（仅首次/缓存失效时执行）
+        run: |
+          if [ ! -f "data/sequoia_v2.db" ]; then
+            echo "数据库不存在，执行全量backfill"
+            python main.py --backfill
+          else
+            echo "数据库已存在，跳过全量回填，直接增量同步快照"
+          fi
+
       - name: 运行选股主程序
         env:
-          # 原版Sequoia-X基础必填飞书webhook
           FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-          # 汇总推送用webhook
           FEISHU_SUMMARY_WEBHOOK: ${{ secrets.FEISHU_SUMMARY_WEBHOOK }}
-          # 下面继续添加你.env里其他所有环境变量
-          # FEISHU_WEBHOOK_TURTLE_TRADE: ${{ secrets.FEISHU_WEBHOOK_TURTLE_TRADE }}
-          # FEISHU_WEBHOOK_MA_VOLUME: ${{ secrets.FEISHU_WEBHOOK_MA_VOLUME }}
+          FEISHU_WEBHOOK_TURTLE_TRADE: ${{ secrets.FEISHU_WEBHOOK_TURTLE_TRADE }}
+          FEISHU_WEBHOOK_MA_VOLUME: ${{ secrets.FEISHU_WEBHOOK_MA_VOLUME }}
         run: python main.py
 
       - name: 上传东方财富导入文件
-        if: success()
+        if: success() && hashFiles('eastmoney_import.txt') != ''
         uses: actions/upload-artifact@v4
         with:
           name: 东方财富重合股票导入文件
