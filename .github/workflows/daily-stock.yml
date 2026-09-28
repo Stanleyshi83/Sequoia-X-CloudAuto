@@ -4,36 +4,39 @@ on:
   schedule:
     # 北京时间 交易日15:45 = UTC时间 07:45
     - cron: '45 7 * * 1-5'
-  workflow_dispatch: # 保留手动触发按钮
+  workflow_dispatch:
 
 jobs:
   run-sequoia:
-    runs-on: ubuntu-latest
+    # 锁定Ubuntu 24.04，避免11月自动升级到26.04出兼容问题
+    runs-on: ubuntu-24.04
     steps:
       - name: 拉取完整项目代码
-        uses: actions/checkout@v4
+        # 升级到最新版，兼容Node.js 24，消除弃用警告
+        uses: actions/checkout@v4.2.3
 
       - name: 配置Python环境
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.3.0
         with:
           python-version: '3.9'
 
       - name: 安装所有第三方依赖
         run: |
-          pip install baostock pandas numpy requests python-dotenv
+          pip install baostock pandas numpy requests python-dotenv pydantic-settings
 
       - name: 运行选股主程序
         env:
-          # 把你本地.env里的所有配置项都在这里注入
-          # 下面是汇总推送用的webhook，其他配置按你.env里的key补充
+          # 汇总推送用webhook
           FEISHU_SUMMARY_WEBHOOK: ${{ secrets.FEISHU_SUMMARY_WEBHOOK }}
-          # 示例：如果你的.env里有FEISHU_WEBHOOK_TURTLE，就在这里加一行
-          # FEISHU_WEBHOOK_TURTLE: ${{ secrets.FEISHU_WEBHOOK_TURTLE }}
+          # 下面按你本地.env里的变量名，逐个添加对应的Secret
+          # 示例：
+          # FEISHU_WEBHOOK_TURTLE_TRADE: ${{ secrets.FEISHU_WEBHOOK_TURTLE_TRADE }}
+          # FEISHU_WEBHOOK_MA_VOLUME: ${{ secrets.FEISHU_WEBHOOK_MA_VOLUME }}
         run: python main.py
 
       - name: 上传东方财富导入文件
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.4.3
         with:
           name: 东方财富重合股票导入文件
           path: eastmoney_import.txt
