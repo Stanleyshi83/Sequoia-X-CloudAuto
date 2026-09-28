@@ -9,6 +9,12 @@ on:
 jobs:
   run-sequoia:
     runs-on: ubuntu-24.04
+    # ========== 全局环境变量：本job下面所有步骤全部共享 ==========
+    env:
+      FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
+      FEISHU_SUMMARY_WEBHOOK: ${{ secrets.FEISHU_SUMMARY_WEBHOOK }}
+      FEISHU_WEBHOOK_TURTLE_TRADE: ${{ secrets.FEISHU_WEBHOOK_TURTLE_TRADE }}
+      FEISHU_WEBHOOK_MA_VOLUME: ${{ secrets.FEISHU_WEBHOOK_MA_VOLUME }}
     steps:
       - name: 拉取完整项目代码
         uses: actions/checkout@v4
@@ -29,7 +35,7 @@ jobs:
           path: data
           key: sequoia-db-v1
 
-      # 判断缓存是否存在，不存在就执行全量backfill；存在则跳过回填，直接运行
+      # 判断缓存是否存在，不存在就执行全量backfill；存在则跳过回填
       - name: 数据回填（仅首次/缓存失效时执行）
         run: |
           if [ ! -f "data/sequoia_v2.db" ]; then
@@ -40,11 +46,6 @@ jobs:
           fi
 
       - name: 运行选股主程序
-        env:
-          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
-          FEISHU_SUMMARY_WEBHOOK: ${{ secrets.FEISHU_SUMMARY_WEBHOOK }}
-          FEISHU_WEBHOOK_TURTLE_TRADE: ${{ secrets.FEISHU_WEBHOOK_TURTLE_TRADE }}
-          FEISHU_WEBHOOK_MA_VOLUME: ${{ secrets.FEISHU_WEBHOOK_MA_VOLUME }}
         run: python main.py
 
       - name: 上传东方财富导入文件
