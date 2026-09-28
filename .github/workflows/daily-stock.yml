@@ -16,7 +16,7 @@ jobs:
       - name: 配置Python环境
         uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.10'
 
       - name: 安装所有第三方依赖
         run: |
@@ -27,7 +27,6 @@ jobs:
           # 汇总推送用webhook
           FEISHU_SUMMARY_WEBHOOK: ${{ secrets.FEISHU_SUMMARY_WEBHOOK }}
           # 下面按你本地.env里的变量名，逐个添加对应的Secret
-          # 示例：
           # FEISHU_WEBHOOK_TURTLE_TRADE: ${{ secrets.FEISHU_WEBHOOK_TURTLE_TRADE }}
           # FEISHU_WEBHOOK_MA_VOLUME: ${{ secrets.FEISHU_WEBHOOK_MA_VOLUME }}
         run: python main.py
