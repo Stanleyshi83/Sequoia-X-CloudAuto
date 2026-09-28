@@ -24,9 +24,11 @@ jobs:
 
       - name: 运行选股主程序
         env:
+          # 原版Sequoia-X基础必填飞书webhook
+          FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
           # 汇总推送用webhook
           FEISHU_SUMMARY_WEBHOOK: ${{ secrets.FEISHU_SUMMARY_WEBHOOK }}
-          # 下面按你本地.env里的变量名，逐个添加对应的Secret
+          # 下面继续添加你.env里其他所有环境变量
           # FEISHU_WEBHOOK_TURTLE_TRADE: ${{ secrets.FEISHU_WEBHOOK_TURTLE_TRADE }}
           # FEISHU_WEBHOOK_MA_VOLUME: ${{ secrets.FEISHU_WEBHOOK_MA_VOLUME }}
         run: python main.py
