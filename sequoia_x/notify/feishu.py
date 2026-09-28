@@ -38,19 +38,20 @@ class FeishuNotifier:
         return f"SZ{code}"
 
     @staticmethod
-    def _get_stock_names(symbols: list[str]) -> dict[str, str]:
-        """通过 baostock 批量查询股票名称，返回 {code: name} 映射。"""
-        import baostock as bs
-        bs.login()
-        mapping = {}
-        for code in symbols:
-            prefix = "sh" if code.startswith(("6", "9")) else "sz"
-            rs = bs.query_stock_basic(code=f"{prefix}.{code}")
+    def _get_stock_names(self, symbols: list[str]) -> dict:
+    mapping = {}
+    import baostock as bs
+    for code in symbols:
+        try:
+            prefix = "sh" if code.startswith("6") else "sz"
+            rs = bs.query_stock_basic(code=prefix + "." + code)
             while rs.next():
                 row = rs.get_row_data()
-                mapping[code] = row[1]  # 第2个字段是股票名称
-        bs.logout()
-        return mapping
+                mapping[code] = row[1]
+        except Exception as e:
+            # baostock超时/报错，直接用股票代码作为名称，不崩溃
+            mapping[code] = code
+    return mapping
 
     def _build_card(self, symbols: list[str], strategy_name: str) -> dict:
         today = date.today().strftime("%Y-%m-%d")
