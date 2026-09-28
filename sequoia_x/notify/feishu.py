@@ -39,19 +39,19 @@ class FeishuNotifier:
 
     @staticmethod
     def _get_stock_names(self, symbols: list[str]) -> dict:
-    mapping = {}
-    import baostock as bs
-    for code in symbols:
-        try:
-            prefix = "sh" if code.startswith("6") else "sz"
-            rs = bs.query_stock_basic(code=prefix + "." + code)
-            while rs.next():
-                row = rs.get_row_data()
-                mapping[code] = row[1]
-        except Exception as e:
-            # baostock超时/报错，直接用股票代码作为名称，不崩溃
-            mapping[code] = code
-    return mapping
+        mapping = {}
+        import baostock as bs
+        for code in symbols:
+            try:
+                prefix = "sh" if code.startswith("6") else "sz"
+                rs = bs.query_stock_basic(code=prefix + "." + code)
+                while rs.next():
+                    row = rs.get_row_data()
+                    mapping[code] = row[1]
+            except Exception as e:
+                # baostock超时、网络异常、返回数据解析失败时兜底
+                mapping[code] = code
+        return mapping
 
     def _build_card(self, symbols: list[str], strategy_name: str) -> dict:
         today = date.today().strftime("%Y-%m-%d")
