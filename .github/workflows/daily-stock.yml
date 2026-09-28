@@ -20,7 +20,7 @@ jobs:
 
       - name: 安装所有第三方依赖
         run: |
-          pip install -r requirements.txt
+          pip install baostock pandas numpy requests python-dotenv pydantic-settings rich tqdm tenacity
 
       - name: 运行选股主程序
         env:
