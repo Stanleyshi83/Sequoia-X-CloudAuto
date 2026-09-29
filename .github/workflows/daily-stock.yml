@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: 拉取完整项目代码
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: 配置Python环境
         uses: actions/setup-python@v5
