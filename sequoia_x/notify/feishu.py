@@ -37,7 +37,6 @@ class FeishuNotifier:
             return f"BJ{code}"
         return f"SZ{code}"
 
-    @staticmethod
     def _get_stock_names(self, symbols: list[str]) -> dict:
         mapping = {}
         import baostock as bs
