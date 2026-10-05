@@ -1,6 +1,8 @@
-from sequoia_x.strategy.base import BaseStrategy
 import pandas as pd
-import os
+from sequoia_x.core.logger import get_logger
+from sequoia_x.strategy.base import BaseStrategy
+
+logger = get_logger(__name__)
 
 def calculate_rsi(series, period=6):
     delta = series.diff()
@@ -13,32 +15,34 @@ def calculate_rsi(series, period=6):
     return rsi
 
 class RsiOversoldStrategy(BaseStrategy):
-    def __init__(self, engine, settings):
-        super().__init__(engine=engine, settings=settings)
-        self.name = "RSI超跌反转策略(严格版)"
-        # ✅ 修复：从环境变量读取，和你其他策略保持一致，避开pydantic settings .get报错
-        self.webhook_key = os.getenv("webhook_rsi", "")
+    """RSI超跌反转策略：RSI6低于25，同时收盘价站上20日均线。
+    Attributes:
+        webhook_key: 路由到 'rsi_oversold' 专属飞书机器人。
+    """
+    webhook_key: str = "rsi_oversold"
 
     def run(self) -> list[str]:
-        selected_codes = []
-        symbol_list = self.engine.get_all_symbols()
-        for code in symbol_list:
-            df = self.engine.load_kline(code)
-            if len(df) < 20:
-                continue
-            latest_row = df.iloc[-1]
-            if latest_row["close"] < 2:
+        symbols = self.engine.get_local_symbols()
+        selected: list[str] = []
+        for symbol in symbols:
+            try:
+                df = self.engine.get_ohlcv(symbol)
+                if len(df) < 20:
+                    continue
+
+                df["rsi6"] = calculate_rsi(df["close"], period=6)
+                df["ma20"] = df["close"].rolling(window=20).mean()
+
+                last = df.iloc[-1]
+                if pd.isna(last["rsi6"]) or pd.isna(last["ma20"]):
+                    continue
+
+                # 选股条件：RSI6 < 25 且 收盘价 > MA20
+                if last["rsi6"] < 25 and last["close"] > last["ma20"]:
+                    selected.append(symbol)
+            except Exception as exc:
+                logger.warning(f"[{symbol}] RsiOversold 计算失败：{exc}")
                 continue
 
-            # pandas原生计算，完全不依赖TA-Lib
-            df["rsi6"] = calculate_rsi(df["close"], period=6)
-            df["ma20"] = df["close"].rolling(window=20).mean()
-
-            latest_row = df.iloc[-1]
-            if pd.isna(latest_row["rsi6"]) or pd.isna(latest_row["ma20"]):
-                continue
-
-            # 严格阈值 RSI<25 + 收盘价站上MA20
-            if latest_row["rsi6"] < 25 and latest_row["close"] > latest_row["ma20"]:
-                selected_codes.append(code)
-        return selected_codes
+        logger.info(f"RsiOversoldStrategy 选出 {len(selected)} 只股票")
+        return selected
