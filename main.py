@@ -32,6 +32,9 @@ from sequoia_x.strategy.turtle_trade import TurtleTradeStrategy
 from sequoia_x.strategy.uptrend_limit_down import UptrendLimitDownStrategy
 from sequoia_x.strategy.rps_breakout import RpsBreakoutStrategy
 from sequoia_x.strategy.private_placement import PrivatePlacementStrategy
+# 改动：导入RsiOversoldStrategy，文件名为 RsiOversoldStrategy.py
+from sequoia_x.strategy.RsiOversoldStrategy import RsiOversoldStrategy
+
 def send_summary_to_feishu(all_results: dict, overlap: list, webhook: str) -> bool:
     """推送汇总结果+多策略重合到飞书（新增功能）"""
     date_str = date.today().strftime("%Y-%m-%d")
@@ -57,6 +60,7 @@ def send_summary_to_feishu(all_results: dict, overlap: list, webhook: str) -> bo
     except Exception as e:
         print(f"汇总推送失败: {e}")
         return False
+
 def generate_eastmoney_file(codes: list) -> str:
     """生成东方财富可导入的TXT文件（新增功能）"""
     file_path = "eastmoney_import.txt"
@@ -64,6 +68,7 @@ def generate_eastmoney_file(codes: list) -> str:
         for code in codes:
             f.write(code + "\n")
     return file_path
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sequoia-X V2 选股系统")
     parser.add_argument(
@@ -100,6 +105,8 @@ def main() -> None:
             UptrendLimitDownStrategy(engine=engine, settings=settings),
             RpsBreakoutStrategy(engine=engine, settings=settings),
             PrivatePlacementStrategy(engine=engine, settings=settings),
+            # 新增 RSI超跌反转策略实例
+            RsiOversoldStrategy(engine=engine, settings=settings),
         ]
         notifier = FeishuNotifier(settings)
         # ========== 新增：收集所有策略结果 ==========
@@ -151,5 +158,6 @@ def main() -> None:
             traceback.print_exc()
         sys.exit(1)
     logger.info("Sequoia-X V2 运行完成")
+
 if __name__ == "__main__":
     main()
