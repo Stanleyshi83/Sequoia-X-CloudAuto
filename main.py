@@ -111,22 +111,26 @@ def main() -> None:
         notifier = FeishuNotifier(settings)
         # ========== 新增：收集所有策略结果 ==========
         all_strategy_results = {}
-        # 5. 遍历策略，有结果则推送至对应机器人
+        # 5. 遍历策略，有结果则推送至对应机器人，增加异常捕获保护
         for strategy in strategies:
             strategy_name = type(strategy).__name__
             logger.info(f"执行策略：{strategy_name}")
-            selected: list[str] = strategy.run()
-            logger.info(f"{strategy_name} 选出 {len(selected)} 只股票")
-            # 保存结果用于后续重合计算
-            all_strategy_results[strategy_name] = selected
-            if selected:
-                notifier.send(
-                    symbols=selected,
-                    strategy_name=strategy_name,
-                    webhook_key=strategy.webhook_key,
-                )
-            else:
-                logger.info(f"{strategy_name} 无选股结果，跳过推送")
+            try:
+                selected: list[str] = strategy.run()
+                logger.info(f"{strategy_name} 选出 {len(selected)} 只股票")
+                # 保存结果用于后续重合计算
+                all_strategy_results[strategy_name] = selected
+                if selected:
+                    notifier.send(
+                        symbols=selected,
+                        strategy_name=strategy_name,
+                        webhook_key=strategy.webhook_key,
+                    )
+                else:
+                    logger.info(f"{strategy_name} 无选股结果，跳过推送")
+            except Exception as e:
+                logger.exception(f"策略 {strategy_name} 执行异常，跳过该策略")
+                all_strategy_results[strategy_name] = []
         # ========== 修复：计算多策略重合（出现在 >=2 个策略即算重合） ==========
         # 原代码 set.intersection(*stock_sets) 求的是"同时被所有策略选中"，
         # 对 5 个集合求交集几乎恒为空集，导致汇总永远报 0。
