@@ -22,15 +22,9 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-      # ========== 新增：安装TA-Lib系统底层库 ==========
-      - name: Install TA-Lib system library
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential libta-lib-dev
-      # 安装所有第三方依赖，增加 ta-lib
       - name: 安装所有第三方依赖
         run: |
-          pip install baostock pandas numpy requests python-dotenv pydantic-settings rich tqdm tenacity ta-lib
+          pip install baostock pandas numpy requests python-dotenv pydantic-settings rich tqdm tenacity
       # 加载缓存：key每次唯一，确保增量写回
       - name: 加载数据库缓存
         uses: actions/cache@v4
