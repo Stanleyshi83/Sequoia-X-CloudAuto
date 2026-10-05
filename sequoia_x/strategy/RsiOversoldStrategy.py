@@ -1,5 +1,6 @@
 from sequoia_x.strategy.base import BaseStrategy
 import pandas as pd
+import os
 
 def calculate_rsi(series, period=6):
     delta = series.diff()
@@ -15,7 +16,8 @@ class RsiOversoldStrategy(BaseStrategy):
     def __init__(self, engine, settings):
         super().__init__(engine=engine, settings=settings)
         self.name = "RSI超跌反转策略(严格版)"
-        self.webhook_key = self.settings.get("webhook_rsi", "")
+        # ✅ 修复：从环境变量读取，和你其他策略保持一致，避开pydantic settings .get报错
+        self.webhook_key = os.getenv("webhook_rsi", "")
 
     def run(self) -> list[str]:
         selected_codes = []
