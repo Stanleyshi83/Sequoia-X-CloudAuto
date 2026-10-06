@@ -19,7 +19,6 @@ load_dotenv()  # 本地运行加载.env，GitHub环境自动跳过不影响
 from datetime import date
 import socket
 socket.setdefaulttimeout(10.0)
-
 from sequoia_x.core.config import get_settings
 from sequoia_x.core.logger import get_logger
 from sequoia_x.data.engine import DataEngine
@@ -34,6 +33,10 @@ from sequoia_x.strategy.rps_breakout import RpsBreakoutStrategy
 from sequoia_x.strategy.private_placement import PrivatePlacementStrategy
 # 改动：导入RsiOversoldStrategy，文件名为 RsiOversoldStrategy.py
 from sequoia_x.strategy.RsiOversoldStrategy import RsiOversoldStrategy
+# ========= 新增3个策略导入 =========
+from sequoia_x.strategy.bollinger_volatility import BollingerVolatilityStrategy
+from sequoia_x.strategy.volume_price_divergence import VolumePriceDivergenceStrategy
+from sequoia_x.strategy.box_breakout import BoxBreakoutStrategy
 
 
 def send_summary_to_feishu(all_results: dict, overlap: list, webhook: str) -> bool:
@@ -50,7 +53,6 @@ def send_summary_to_feishu(all_results: dict, overlap: list, webhook: str) -> bo
     # 各策略结果概览
     for strategy_name, codes in all_results.items():
         content += f"📌 {strategy_name}：{len(codes)}只\n"
-
     payload = {
         "msg_type": "text",
         "content": {"text": content}
@@ -101,6 +103,10 @@ def main() -> None:
             PrivatePlacementStrategy(engine=engine, settings=settings),
             # 新增 RSI超跌反转策略实例
             RsiOversoldStrategy(engine=engine, settings=settings),
+            # ========= 追加3个新策略实例 =========
+            BollingerVolatilityStrategy(engine=engine, settings=settings),
+            VolumePriceDivergenceStrategy(engine=engine, settings=settings),
+            BoxBreakoutStrategy(engine=engine, settings=settings),
         ]
         notifier = FeishuNotifier(settings)
         # ========== 新增：收集所有策略结果 ==========
@@ -137,7 +143,6 @@ def main() -> None:
             code for code, cnt in stock_counter.items() if cnt >= 2
         )
         logger.info(f"多策略重合股票共 {len(overlap_stocks)} 只: {overlap_stocks}")
-
         # ========== 新增：统一推送汇总结果 ==========
         # 从环境变量读取汇总用的飞书webhook（GitHub Secrets注入）
         summary_webhook = os.environ.get("FEISHU_SUMMARY_WEBHOOK", "")
