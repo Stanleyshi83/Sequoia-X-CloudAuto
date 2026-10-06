@@ -46,14 +46,15 @@ jobs:
         run: python main.py > action_log.txt 2>&1
       - name: 生成共振标的Markdown台账
         run: python generate_resonance_md.py action_log.txt
-      # 上传日志文件 + 生成的md台账为制品，存在md才上传md
+      # 上传日志文件，每次都上传
       - name: 上传日志文件
         uses: actions/upload-artifact@v4
         with:
-          name: sequoia-output-${{ github.run_id }}
+          name: sequoia-log-${{ github.run_id }}
           paths: action_log.txt
-      - name: 上传Markdown台账（仅文件存在时）
-        if: exists('resonance_today.md')
+      # 只有 resonance_today.md 文件存在时，才执行此步骤上传md
+      - name: 上传Markdown台账（仅文件存在）
+        if: ${{ hashFiles('resonance_today.md') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: resonance-today-md-${{ github.run_id }}
