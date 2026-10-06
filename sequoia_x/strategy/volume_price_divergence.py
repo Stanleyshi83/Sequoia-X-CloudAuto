@@ -1,36 +1,37 @@
 import pandas as pd
-from typing import List
-from .base import BaseStrategy
-
+from sequoia_x.core.logger import get_logger
+from sequoia_x.strategy.base import BaseStrategy
+logger = get_logger(__name__)
 
 class VolumePriceDivergenceStrategy(BaseStrategy):
+    """量价底背离反转：价格创20日新低，成交量不再创新低，站上60日均线
+    Attributes:
+        webhook_key: 路由到 'vol_price_div' 专属飞书机器人。
+        group: 策略分组 bottom_reversal
     """
-    量价底背离反转策略
-    逻辑：股价创N日新低，但成交量没有同步创新低，抛压衰竭，底部量价背离；叠加均线过滤
-    """
-    def __init__(self):
-        self.name = "量价底背离反转"
-        self.group = "bottom_reversal"
-
-    def run(self, df: pd.DataFrame) -> List[str]:
-        df = df.copy()
-        lookback = 60
-        # 60日价格低点
-        df["low_60_low"] = df["low"].rolling(window=lookback).min()
-        # 60日成交量低点
-        df["vol_60_low"] = df["volume"].rolling(window=lookback).min()
-
-        # 条件1：今日价格创60日新低
-        cond_price_newlow = df["low"] == df["low_60_low"]
-        # 条件2：当前成交量 > 60日最低成交量（价格新低，量不再创新低 → 底背离）
-        cond_vol_not_newlow = df["volume"] > df["vol_60_low"] * 0.85
-        # 条件3：价格不再继续创新低，出现止跌（今日收盘价高于最低价）
-        cond_stop_fall = df["close"] > df["low"] * 1.01
-
-        # 趋势过滤：收盘价大于60日均线，过滤持续单边暴跌
-        df["ma60"] = df["close"].rolling(60).mean()
-        cond_trend = df["close"] > df["ma60"]
-
-        df["signal"] = cond_price_newlow & cond_vol_not_newlow & cond_stop_fall & cond_trend
-        selected_codes = df[df["signal"]]["code"].unique().tolist()
-        return selected_codes
+    webhook_key: str = "vol_price_div"
+    group: str = "bottom_reversal"
+    def run(self) -> list[str]:
+        symbols = self.engine.get_local_symbols()
+        selected: list[str] = []
+        for symbol in symbols:
+            try:
+                df = self.engine.get_ohlcv(symbol)
+                if len(df) < 60:
+                    continue
+                df["price_low_20"] = df["close"].rolling(20).min()
+                df["vol_low_20"] = df["volume"].rolling(20).min()
+                df["ma60"] = df["close"].rolling(60).mean()
+                last = df.iloc[-1]
+                if pd.isna(last["price_low_20"]) or pd.isna(last["vol_low_20"]) or pd.isna(last["ma60"]):
+                    continue
+                cond_price_new_low = last["close"] == last["price_low_20"]
+                cond_vol_not_new_low = last["volume"] > last["vol_low_20"] * 1.02
+                cond_ma60 = last["close"] > last["ma60"]
+                if cond_price_new_low and cond_vol_not_new_low and cond_ma60:
+                    selected.append(symbol)
+            except Exception as exc:
+                logger.warning(f"[{symbol}] VolumePriceDivergence 计算失败：{exc}")
+                continue
+        logger.info(f"VolumePriceDivergenceStrategy 选出 {len(selected)} 只股票")
+        return selected
