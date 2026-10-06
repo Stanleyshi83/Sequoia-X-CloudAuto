@@ -1,35 +1,36 @@
 import pandas as pd
-from typing import List
-from .base import BaseStrategy
-
+from sequoia_x.core.logger import get_logger
+from sequoia_x.strategy.base import BaseStrategy
+logger = get_logger(__name__)
 
 class BoxBreakoutStrategy(BaseStrategy):
+    """放量箱体平台突破：突破20日箱体高点，成交量大于20日均量1.8倍
+    Attributes:
+        webhook_key: 路由到 'box_breakout' 专属飞书机器人。
+        group: 策略分组 momentum_break
     """
-    放量箱体平台突破策略
-    逻辑：收盘价突破60日箱体高点，突破当日成交量大于20日均量1.8倍，代表放量资金进场
-    """
-    def __init__(self):
-        self.name = "放量箱体平台突破"
-        self.group = "momentum_break"
-
-    def run(self, df: pd.DataFrame) -> List[str]:
-        df = df.copy()
-        box_period = 60
-        vol_ma_period = 20
-        vol_multiple = 1.8
-
-        # 箱体上沿：60日最高收盘价
-        df["box_high"] = df["close"].rolling(window=box_period).max()
-        # 20日均量
-        df["vol_ma20"] = df["volume"].rolling(window=vol_ma_period).mean()
-
-        # 条件1：今日收盘价突破箱体上沿
-        cond_breakout = df["close"] > df["box_high"]
-        # 条件2：放量，当前成交量大于20日均量*倍数
-        cond_volume = df["volume"] > df["vol_ma20"] * vol_multiple
-        # 条件3：突破当日最低价不能大幅跳水，防止长上影假突破
-        cond_no_long_upper_shadow = df["low"] > df["box_high"] * 0.97
-
-        df["signal"] = cond_breakout & cond_volume & cond_no_long_upper_shadow
-        selected_codes = df[df["signal"]]["code"].unique().tolist()
-        return selected_codes
+    webhook_key: str = "box_breakout"
+    group: str = "momentum_break"
+    def run(self) -> list[str]:
+        symbols = self.engine.get_local_symbols()
+        selected: list[str] = []
+        for symbol in symbols:
+            try:
+                df = self.engine.get_ohlcv(symbol)
+                if len(df) < 20:
+                    continue
+                df["high_20"] = df["high"].rolling(20).max()
+                df["vol_ma20"] = df["volume"].rolling(20).mean()
+                last = df.iloc[-1]
+                prev_high20 = df.iloc[-2]["high_20"]
+                if pd.isna(last["vol_ma20"]) or pd.isna(prev_high20):
+                    continue
+                cond_break = last["close"] > prev_high20
+                cond_vol = last["volume"] > last["vol_ma20"] * 1.8
+                if cond_break and cond_vol:
+                    selected.append(symbol)
+            except Exception as exc:
+                logger.warning(f"[{symbol}] BoxBreakout 计算失败：{exc}")
+                continue
+        logger.info(f"BoxBreakoutStrategy 选出 {len(selected)} 只股票")
+        return selected
