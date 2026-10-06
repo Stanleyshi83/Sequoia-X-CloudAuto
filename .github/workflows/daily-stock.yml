@@ -51,11 +51,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: sequoia-log-${{ github.run_id }}
-          paths: action_log.txt
+          path: action_log.txt
+          if-no-files-found: error
       # 只有 resonance_today.md 文件存在时，才执行此步骤上传md
       - name: 上传Markdown台账（仅文件存在）
         if: ${{ hashFiles('resonance_today.md') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: resonance-today-md-${{ github.run_id }}
-          paths: resonance_today.md
+          path: resonance_today.md
+          if-no-files-found: ignore
