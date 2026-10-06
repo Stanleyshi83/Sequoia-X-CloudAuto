@@ -44,9 +44,3 @@ jobs:
           fi
       - name: 运行选股主程序
         run: python main.py
-      - name: 上传东方财富导入文件
-        if: success() && hashFiles('eastmoney_import.txt') != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: 东方财富重合股票导入文件
-          path: eastmoney_import.txt
