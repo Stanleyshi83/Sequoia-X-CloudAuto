@@ -7,7 +7,6 @@ Sequoia-X V2 主程序入口（GitHub Actions适配版）
 1. 自动收集所有策略选股结果
 2. 计算多策略重合股票
 3. 统一推送汇总结果到飞书
-4. 自动生成东方财富自选股导入TXT文件
 """
 import argparse
 import sys
@@ -20,6 +19,7 @@ load_dotenv()  # 本地运行加载.env，GitHub环境自动跳过不影响
 from datetime import date
 import socket
 socket.setdefaulttimeout(10.0)
+
 from sequoia_x.core.config import get_settings
 from sequoia_x.core.logger import get_logger
 from sequoia_x.data.engine import DataEngine
@@ -35,6 +35,7 @@ from sequoia_x.strategy.private_placement import PrivatePlacementStrategy
 # 改动：导入RsiOversoldStrategy，文件名为 RsiOversoldStrategy.py
 from sequoia_x.strategy.RsiOversoldStrategy import RsiOversoldStrategy
 
+
 def send_summary_to_feishu(all_results: dict, overlap: list, webhook: str) -> bool:
     """推送汇总结果+多策略重合到飞书（新增功能）"""
     date_str = date.today().strftime("%Y-%m-%d")
@@ -49,7 +50,7 @@ def send_summary_to_feishu(all_results: dict, overlap: list, webhook: str) -> bo
     # 各策略结果概览
     for strategy_name, codes in all_results.items():
         content += f"📌 {strategy_name}：{len(codes)}只\n"
-    content += "\n💡 附件可下载东方财富导入文件"
+
     payload = {
         "msg_type": "text",
         "content": {"text": content}
@@ -61,13 +62,6 @@ def send_summary_to_feishu(all_results: dict, overlap: list, webhook: str) -> bo
         print(f"汇总推送失败: {e}")
         return False
 
-def generate_eastmoney_file(codes: list) -> str:
-    """生成东方财富可导入的TXT文件（新增功能）"""
-    file_path = "eastmoney_import.txt"
-    with open(file_path, "w", encoding="utf-8") as f:
-        for code in codes:
-            f.write(code + "\n")
-    return file_path
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sequoia-X V2 选股系统")
@@ -143,10 +137,7 @@ def main() -> None:
             code for code, cnt in stock_counter.items() if cnt >= 2
         )
         logger.info(f"多策略重合股票共 {len(overlap_stocks)} 只: {overlap_stocks}")
-        # ========== 新增：生成东方财富导入文件 ==========
-        if overlap_stocks:
-            generate_eastmoney_file(overlap_stocks)
-            logger.info("东方财富导入文件已生成: eastmoney_import.txt")
+
         # ========== 新增：统一推送汇总结果 ==========
         # 从环境变量读取汇总用的飞书webhook（GitHub Secrets注入）
         summary_webhook = os.environ.get("FEISHU_SUMMARY_WEBHOOK", "")
@@ -162,6 +153,7 @@ def main() -> None:
             traceback.print_exc()
         sys.exit(1)
     logger.info("Sequoia-X V2 运行完成")
+
 
 if __name__ == "__main__":
     main()
