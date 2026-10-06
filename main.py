@@ -7,7 +7,8 @@ Sequoia-X V2 主程序入口（GitHub Actions适配版）
 1. 自动收集所有策略选股结果
 2. 计算多策略重合股票
 3. 按策略分组展示结果，区分【同组多策略选中】vs【跨不同组别同时选中（跨组共振高亮）】
-4. 统一推送汇总结果到飞书
+4. 新增：【10个技术策略同时命中 终极共振】标的展示，排除事件定增策略，避免恒为空
+5. 统一推送汇总结果到飞书
 """
 import argparse
 import sys
@@ -42,12 +43,20 @@ def send_summary_to_feishu(all_results: dict,
                             overlap: list,
                             cross_group_resonance: list,
                             same_group_overlap: list,
+                            all_tech_intersection: list,
                             strategy_group_map: dict,
                             webhook: str) -> bool:
-    """推送汇总结果，按分组展示，区分跨组共振/同组重合"""
+    """推送汇总结果，区分：10技术策略终极共振 / 跨组共振 / 同组重合"""
     date_str = date.today().strftime("%Y-%m-%d")
     content = f"【选股汇总】 {date_str}\n\n"
-    # 最高优先级：跨组共振（不同组别同时选中）
+    # 最高优先级：10个技术策略同时命中（排除事件定增策略）
+    content += f"💎【🌟10个技术策略同时选中｜终极共振，极高优先级（排除事件定增策略）】共{len(all_tech_intersection)}只：\n"
+    if all_tech_intersection:
+        content += "、".join(sorted(all_tech_intersection))
+    else:
+        content += "今日无标的同时满足全部10个技术策略条件"
+    content += "\n\n"
+    # 次高优先级：跨组共振（不同组别同时选中）
     content += f"💎【🌟跨组共振｜跨不同策略组别同时选出，高优先级】共{len(cross_group_resonance)}只：\n"
     if cross_group_resonance:
         content += "、".join(sorted(cross_group_resonance))
@@ -61,8 +70,8 @@ def send_summary_to_feishu(all_results: dict,
     else:
         content += "今日无同组重合标的"
     content += "\n\n"
-    # 原始多策略重合（>=2策略选中，兼容旧口径）
-    content += f"🔥【原版多策略重合（>=2策略选中）】共{len(overlap)}只：\n"
+    # 原版多策略重合（>=2策略选中，兼容旧口径，包含事件策略）
+    content += f"🔥【原版多策略重合（>=2策略选中，含事件策略）】共{len(overlap)}只：\n"
     if overlap:
         content += "、".join(sorted(overlap))
     else:
@@ -170,10 +179,7 @@ def main() -> None:
             except Exception as e:
                 logger.exception(f"策略 {strategy_name} 执行异常，跳过该策略")
                 all_strategy_results[strategy_name] = []
-        # ========== 修复：计算多策略重合（出现在 >=2 个策略即算重合） ==========
-        # 原代码 set.intersection(*stock_sets) 求的是"同时被所有策略选中"，
-        # 对 5 个集合求交集几乎恒为空集，导致汇总永远报 0。
-        # 正确口径：一只股票只要被 2 个及以上策略选中，就算重合。
+        # ========== 修复：>=2策略命中统计（包含事件策略） ==========
         stock_counter = Counter()
         # 股票 -> 命中的策略列表；股票 -> 命中的分组集合
         stock_hit_strategies = defaultdict(list)
@@ -188,7 +194,7 @@ def main() -> None:
             code for code, cnt in stock_counter.items() if cnt >= 2
         )
         logger.info(f"多策略重合股票共 {len(overlap_stocks)} 只: {overlap_stocks}")
-        # ========== 新增：区分跨组共振 / 同组重合 ==========
+        # ========== 新增：区分跨组共振 / 同组重合（包含事件策略参与统计） ==========
         cross_group_resonance = []
         same_group_overlap = []
         for stock_code, group_set in stock_hit_groups.items():
@@ -200,8 +206,19 @@ def main() -> None:
                     same_group_overlap.append(stock_code)
         logger.info(f"【跨组共振标的】共{len(cross_group_resonance)}只：{cross_group_resonance}")
         logger.info(f"【同组多策略重合标的】共{len(same_group_overlap)}只：{same_group_overlap}")
+        # ========== 新增：10个技术策略同时命中（排除事件定增PrivatePlacementStrategy） ==========
+        all_tech_strategy_sets = []
+        for strat_name, codes in all_strategy_results.items():
+            if strat_name == "PrivatePlacementStrategy":
+                continue
+            all_tech_strategy_sets.append(set(codes))
+
+        if all_tech_strategy_sets:
+            all_tech_intersection = list(set.intersection(*all_tech_strategy_sets))
+        else:
+            all_tech_intersection = []
+        logger.info(f"【10个技术策略同时命中标的｜排除事件策略】共{len(all_tech_intersection)}只：{all_tech_intersection}")
         # ========== 新增：统一推送汇总结果 ==========
-        # 从环境变量读取汇总用的飞书webhook（GitHub Secrets注入）
         summary_webhook = os.environ.get("FEISHU_SUMMARY_WEBHOOK", "")
         if summary_webhook:
             push_ok = send_summary_to_feishu(
@@ -209,6 +226,7 @@ def main() -> None:
                 overlap_stocks,
                 cross_group_resonance,
                 same_group_overlap,
+                all_tech_intersection,
                 strategy_group_map,
                 summary_webhook
             )
