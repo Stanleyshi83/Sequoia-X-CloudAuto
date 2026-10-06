@@ -25,6 +25,7 @@ from sequoia_x.core.logger import get_logger
 from sequoia_x.data.engine import DataEngine
 from sequoia_x.notify.feishu import FeishuNotifier
 from sequoia_x.strategy.base import BaseStrategy
+# 全部11个策略导入
 from sequoia_x.strategy.high_tight_flag import HighTightFlagStrategy
 from sequoia_x.strategy.limit_up_shakeout import LimitUpShakeoutStrategy
 from sequoia_x.strategy.ma_volume import MaVolumeStrategy
@@ -32,13 +33,10 @@ from sequoia_x.strategy.turtle_trade import TurtleTradeStrategy
 from sequoia_x.strategy.uptrend_limit_down import UptrendLimitDownStrategy
 from sequoia_x.strategy.rps_breakout import RpsBreakoutStrategy
 from sequoia_x.strategy.private_placement import PrivatePlacementStrategy
-# 改动：导入RsiOversoldStrategy，文件名为 RsiOversoldStrategy.py
 from sequoia_x.strategy.RsiOversoldStrategy import RsiOversoldStrategy
-# ========= 新增3个策略导入 =========
 from sequoia_x.strategy.bollinger_volatility import BollingerVolatilityStrategy
 from sequoia_x.strategy.volume_price_divergence import VolumePriceDivergenceStrategy
 from sequoia_x.strategy.box_breakout import BoxBreakoutStrategy
-
 
 def send_summary_to_feishu(all_results: dict,
                             overlap: list,
@@ -49,7 +47,6 @@ def send_summary_to_feishu(all_results: dict,
     """推送汇总结果，按分组展示，区分跨组共振/同组重合"""
     date_str = date.today().strftime("%Y-%m-%d")
     content = f"【选股汇总】 {date_str}\n\n"
-
     # 最高优先级：跨组共振（不同组别同时选中）
     content += f"💎【🌟跨组共振｜跨不同策略组别同时选出，高优先级】共{len(cross_group_resonance)}只：\n"
     if cross_group_resonance:
@@ -57,7 +54,6 @@ def send_summary_to_feishu(all_results: dict,
     else:
         content += "今日无跨组共振标的"
     content += "\n\n"
-
     # 同组内多策略重合
     content += f"⚡【同组内多策略重合标的】共{len(same_group_overlap)}只：\n"
     if same_group_overlap:
@@ -65,7 +61,6 @@ def send_summary_to_feishu(all_results: dict,
     else:
         content += "今日无同组重合标的"
     content += "\n\n"
-
     # 原始多策略重合（>=2策略选中，兼容旧口径）
     content += f"🔥【原版多策略重合（>=2策略选中）】共{len(overlap)}只：\n"
     if overlap:
@@ -73,13 +68,11 @@ def send_summary_to_feishu(all_results: dict,
     else:
         content += "今日无重合股票"
     content += "\n\n---\n\n"
-
     # 按分组渲染各个策略结果
     group_bucket = defaultdict(list)
     for strategy_name, codes in all_results.items():
         g = strategy_group_map[strategy_name]
         group_bucket[g].append((strategy_name, codes))
-
     group_cn_name = {
         "bottom_reversal": "底部反转组",
         "volatility": "波动率蓄势组",
@@ -87,14 +80,12 @@ def send_summary_to_feishu(all_results: dict,
         "strong_shakeout": "强势股洗盘组",
         "event": "事件选股组"
     }
-
     for group_key, strat_list in group_bucket.items():
         group_display_name = group_cn_name.get(group_key, group_key)
         content += f"📂【{group_display_name}】\n"
         for strat_name, codes in strat_list:
             content += f" 📌 {strat_name}：{len(codes)}只\n"
         content += "\n"
-
     payload = {
         "msg_type": "text",
         "content": {"text": content}
@@ -105,7 +96,6 @@ def send_summary_to_feishu(all_results: dict,
     except Exception as e:
         print(f"汇总推送失败: {e}")
         return False
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sequoia-X V2 选股系统")
@@ -134,21 +124,24 @@ def main() -> None:
         logger.info("开始拉取最新快照...")
         count = engine.sync_today_bulk()
         logger.info(f"快照同步完成，写入 {count} 只股票")
-        # 4. 策略列表（新增策略在此追加即可）
+        # 4. 策略列表【完整11个策略全部注册】
         strategies: list[BaseStrategy] = [
-            MaVolumeStrategy(engine=engine, settings=settings),
-            TurtleTradeStrategy(engine=engine, settings=settings),
-            HighTightFlagStrategy(engine=engine, settings=settings),
-            LimitUpShakeoutStrategy(engine=engine, settings=settings),
-            UptrendLimitDownStrategy(engine=engine, settings=settings),
-            RpsBreakoutStrategy(engine=engine, settings=settings),
-            PrivatePlacementStrategy(engine=engine, settings=settings),
-            # 新增 RSI超跌反转策略实例
+            # bottom_reversal 底部反转
             RsiOversoldStrategy(engine=engine, settings=settings),
-            # ========= 追加3个新策略实例 =========
-            BollingerVolatilityStrategy(engine=engine, settings=settings),
+            UptrendLimitDownStrategy(engine=engine, settings=settings),
             VolumePriceDivergenceStrategy(engine=engine, settings=settings),
+            # volatility 波动率蓄势
+            BollingerVolatilityStrategy(engine=engine, settings=settings),
+            # momentum_break 动量突破
             BoxBreakoutStrategy(engine=engine, settings=settings),
+            HighTightFlagStrategy(engine=engine, settings=settings),
+            MaVolumeStrategy(engine=engine, settings=settings),
+            RpsBreakoutStrategy(engine=engine, settings=settings),
+            TurtleTradeStrategy(engine=engine, settings=settings),
+            # strong_shakeout 强势股洗盘
+            LimitUpShakeoutStrategy(engine=engine, settings=settings),
+            # event 事件驱动
+            PrivatePlacementStrategy(engine=engine, settings=settings),
         ]
         notifier = FeishuNotifier(settings)
         # ========== 新增：收集所有策略结果 ==========
@@ -177,7 +170,6 @@ def main() -> None:
             except Exception as e:
                 logger.exception(f"策略 {strategy_name} 执行异常，跳过该策略")
                 all_strategy_results[strategy_name] = []
-
         # ========== 修复：计算多策略重合（出现在 >=2 个策略即算重合） ==========
         # 原代码 set.intersection(*stock_sets) 求的是"同时被所有策略选中"，
         # 对 5 个集合求交集几乎恒为空集，导致汇总永远报 0。
@@ -186,19 +178,16 @@ def main() -> None:
         # 股票 -> 命中的策略列表；股票 -> 命中的分组集合
         stock_hit_strategies = defaultdict(list)
         stock_hit_groups = defaultdict(set)
-
         for strategy_name, codes in all_strategy_results.items():
             group = strategy_group_map[strategy_name]
             for code in set(codes):
                 stock_counter[code] += 1
                 stock_hit_strategies[code].append(strategy_name)
                 stock_hit_groups[code].add(group)
-
         overlap_stocks = sorted(
             code for code, cnt in stock_counter.items() if cnt >= 2
         )
         logger.info(f"多策略重合股票共 {len(overlap_stocks)} 只: {overlap_stocks}")
-
         # ========== 新增：区分跨组共振 / 同组重合 ==========
         cross_group_resonance = []
         same_group_overlap = []
@@ -211,7 +200,6 @@ def main() -> None:
                     same_group_overlap.append(stock_code)
         logger.info(f"【跨组共振标的】共{len(cross_group_resonance)}只：{cross_group_resonance}")
         logger.info(f"【同组多策略重合标的】共{len(same_group_overlap)}只：{same_group_overlap}")
-
         # ========== 新增：统一推送汇总结果 ==========
         # 从环境变量读取汇总用的飞书webhook（GitHub Secrets注入）
         summary_webhook = os.environ.get("FEISHU_SUMMARY_WEBHOOK", "")
@@ -234,7 +222,6 @@ def main() -> None:
             traceback.print_exc()
         sys.exit(1)
     logger.info("Sequoia-X V2 运行完成")
-
 
 if __name__ == "__main__":
     main()
