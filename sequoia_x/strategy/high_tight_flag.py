@@ -11,6 +11,7 @@ class HighTightFlagStrategy(BaseStrategy):
     """
     webhook_key: str = "htf"
     group: str = "momentum_break"
+
     def run(self) -> list[str]:
         symbols = self.engine.get_local_symbols()
         selected: list[str] = []
