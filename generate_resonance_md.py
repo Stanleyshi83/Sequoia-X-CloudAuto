@@ -7,6 +7,7 @@ generate_resonance_md.py
 
 方案B：直接粘贴日志字符串到代码内log_text变量，本地测试
 输出：resonance_today.md
+新增限制：无共振标的时，不生成空md文件
 """
 import re
 import sys
@@ -129,6 +130,9 @@ def main():
         print("请传入日志文件：python generate_resonance_md.py log.txt")
         return
     items = parse_log(log_content)
+    if not items:
+        print("ℹ️ 今日无共振标的，跳过生成 resonance_today.md")
+        return
     md_text = render_md(items)
     with open("resonance_today.md","w",encoding="utf-8") as f:
         f.write(md_text)
