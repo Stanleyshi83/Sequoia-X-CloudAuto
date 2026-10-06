@@ -11,6 +11,7 @@ class BoxBreakoutStrategy(BaseStrategy):
     """
     webhook_key: str = "box_breakout"
     group: str = "momentum_break"
+
     def run(self) -> list[str]:
         symbols = self.engine.get_local_symbols()
         selected: list[str] = []
