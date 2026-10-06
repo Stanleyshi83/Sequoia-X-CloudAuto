@@ -2,7 +2,6 @@ import pandas as pd
 import sqlite3
 from sequoia_x.strategy.base import BaseStrategy
 from sequoia_x.core.logger import get_logger
-
 logger = get_logger(__name__)
 
 class RpsBreakoutStrategy(BaseStrategy):
@@ -11,11 +10,14 @@ class RpsBreakoutStrategy(BaseStrategy):
     1. 20日涨幅上限：剔除短期连续暴涨的高位加速票，规避强势股补跌
     2. 最低成交额过滤：剔除流动性极差的冷门小票
     3. 极端爆量过滤：剔除单日天量换手、筹码松动标的
+    Attributes:
+        webhook_key: 路由到 'rps' 专属飞书机器人。
+        group: 策略分组 momentum_break
     """
     webhook_key: str = "rps"
+    group: str = "momentum_break"
     rps_period: int = 120
     rps_threshold: int = 90
-
     # ===== 优化参数（可自行微调） =====
     short_window = 20                # 短期涨幅观察周期
     max_short_gain = 0.40            # 20日累计涨幅上限，超过40%剔除
@@ -36,31 +38,24 @@ class RpsBreakoutStrategy(BaseStrategy):
             return []
         if df.empty:
             return []
-
         df['date'] = pd.to_datetime(df['date'])
         df = df.sort_values(['symbol', 'date'])
-
         # 原版：120日涨跌幅，用于RPS横向排位
         df['close_shift'] = df.groupby('symbol')['close'].shift(self.rps_period)
         df['pct_change'] = (df['close'] - df['close_shift']) / df['close_shift']
-
         # 新增1：20日涨跌幅，过滤短期暴涨高位票
         df['close_20_shift'] = df.groupby('symbol')['close'].shift(self.short_window)
         df['pct_20d'] = (df['close'] - df['close_20_shift']) / df['close_20_shift']
-
         # 新增2：10日均量，过滤极端爆量
         df['avg_vol_10'] = df.groupby('symbol')['volume'].transform(
             lambda x: x.rolling(window=self.vol_avg_window, min_periods=5).mean()
         )
-
         latest_date = df['date'].max()
         latest_df = df[df['date'] == latest_date].copy()
         latest_df = latest_df.dropna(subset=['pct_change'])
-
         # RPS横向百分位排名
         latest_df['rps'] = latest_df['pct_change'].rank(pct=True) * 100
         strong_stocks = latest_df[latest_df['rps'] >= self.rps_threshold].copy()
-
         # 原版：120日滚动最高价，突破判定
         roll_high = df.groupby('symbol')['high'].rolling(
             window=self.rps_period, min_periods=self.rps_period // 2
@@ -68,7 +63,6 @@ class RpsBreakoutStrategy(BaseStrategy):
         df['roll_high'] = roll_high
         latest_roll_high = df[df['date'] == latest_date][['symbol', 'roll_high']]
         strong_stocks = strong_stocks.merge(latest_roll_high, on='symbol')
-
         # ========== 全部筛选条件 ==========
         # 原有核心条件：收盘价接近/突破120日高点
         cond_breakout = strong_stocks['close'] >= strong_stocks['roll_high'] * 0.90
@@ -78,10 +72,8 @@ class RpsBreakoutStrategy(BaseStrategy):
         cond_liquidity = strong_stocks['turnover'] >= self.min_turnover
         # 过滤3：无极端爆量，避免筹码松动
         cond_no_spike = strong_stocks['volume'] <= strong_stocks['avg_vol_10'] * self.vol_spike_multiplier
-
         selected = strong_stocks[
             cond_breakout & cond_gain_limit & cond_liquidity & cond_no_spike
         ]
-
         logger.info(f"RpsBreakoutStrategy 优化版选出 {len(selected)} 只股票")
         return selected['symbol'].tolist()
