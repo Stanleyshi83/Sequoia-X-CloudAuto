@@ -42,8 +42,10 @@ jobs:
           else
             echo "数据库已就绪（缓存或仓库），跳过回填，直接增量同步快照"
           fi
-      - name: 运行选股主程序，输出日志保存到 action_log.txt
-        run: python main.py > action_log.txt 2>&1
+      # 运行选股主程序，tee实现：控制台输出 + 同时写入action_log.txt
+      - name: 运行选股主程序
+        run: python main.py | tee action_log.txt 2>&1
+      # 生成共振标的Markdown台账，仍然读取action_log.txt
       - name: 生成共振标的Markdown台账
         run: python generate_resonance_md.py action_log.txt
       # 上传日志文件，每次都上传
