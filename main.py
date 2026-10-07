@@ -42,6 +42,7 @@ from sequoia_x.strategy.bollinger_volatility import BollingerVolatilityStrategy
 from sequoia_x.strategy.volume_price_divergence import VolumePriceDivergenceStrategy
 from sequoia_x.strategy.box_breakout import BoxBreakoutStrategy
 
+
 def send_summary_to_feishu(all_results: dict,
                             overlap: list,
                             cross_group_resonance: list,
@@ -49,9 +50,19 @@ def send_summary_to_feishu(all_results: dict,
                             group_inner_overlap: dict,
                             all_tech_intersection: list,
                             strategy_group_map: dict,
+                            stock_hit_strategies: dict,
                             webhook: str) -> bool:
-    """推送汇总结果，区分：10技术策略终极共振 / 跨组共振 / 同组重合（按分组明细）"""
+    """推送汇总结果，新版渲染：跨组共振带策略+分组；组内重合嵌入分组内"""
     date_str = date.today().strftime("%Y-%m-%d")
+    # 分组中文映射
+    group_cn_name = {
+        "bottom_reversal": "底部反转组",
+        "volatility": "波动率蓄势组",
+        "momentum_break": "动量突破组",
+        "strong_shakeout": "强势股洗盘组",
+        "event": "事件选股组"
+    }
+
     content = f"【选股汇总】 {date_str}\n\n"
     # 最高优先级：10个技术策略同时命中（排除事件定增策略）
     content += f"💎【🌟10个技术策略同时选中｜终极共振，极高优先级（排除事件定增策略）】共{len(all_tech_intersection)}只：\n"
@@ -60,27 +71,27 @@ def send_summary_to_feishu(all_results: dict,
     else:
         content += "今日无标的同时满足全部10个技术策略条件"
     content += "\n\n"
-    # 次高优先级：跨组共振（不同组别同时选中）
-    content += f"💎【🌟跨组共振｜跨不同策略组别同时选出，高优先级】共{len(cross_group_resonance)}只：\n"
+
+    # 次高优先级：跨组共振
+    content += f"💎【🌟跨组共振｜跨不同策略组别同时选出，高优先级】共{len(cross_group_resonance)}只\n"
     if cross_group_resonance:
-        content += "、".join(sorted(cross_group_resonance))
+        # 标的清单：英文逗号分隔
+        cross_codes_sorted = sorted(cross_group_resonance)
+        content += f"标的清单：{','.join(cross_codes_sorted)}\n"
+        content += "标的明细：\n"
+        for code in cross_codes_sorted:
+            strat_list = stock_hit_strategies[code]
+            # 策略名(中文分组)
+            strat_with_group = []
+            for s_name in strat_list:
+                g_key = strategy_group_map[s_name]
+                g_cn = group_cn_name.get(g_key, g_key)
+                strat_with_group.append(f"{s_name}({g_cn})")
+            content += f"{code}｜命中策略：{ '、'.join(strat_with_group) }\n"
     else:
-        content += "今日无跨组共振标的"
-    content += "\n\n"
-    # 同组内多策略重合标的，按分组展开明细
-    content += f"⚡【同组内多策略重合标的｜同分组内>=2策略选中】共{len(same_group_overlap)}只\n"
-    group_cn_name = {
-        "bottom_reversal": "底部反转组",
-        "volatility": "波动率蓄势组",
-        "momentum_break": "动量突破组",
-        "strong_shakeout": "强势股洗盘组",
-        "event": "事件选股组"
-    }
-    for g_key, code_list in group_inner_overlap.items():
-        g_cn = group_cn_name.get(g_key, g_key)
-        if code_list:
-            content += f" ▫️{g_cn}：{len(code_list)}只 → {'、'.join(sorted(code_list))}\n"
+        content += "标的清单：无\n标的明细：无\n"
     content += "\n"
+
     # 原版多策略重合（>=2策略选中，兼容旧口径，包含事件策略）
     content += f"🔥【原版多策略重合（>=2策略选中，含事件策略）】共{len(overlap)}只：\n"
     if overlap:
@@ -88,17 +99,37 @@ def send_summary_to_feishu(all_results: dict,
     else:
         content += "今日无重合股票"
     content += "\n\n---\n\n"
-    # 按分组渲染各个策略结果
+
+    # 按分组渲染，每个分组内增加本组内重合标的清单+明细
     group_bucket = defaultdict(list)
     for strategy_name, codes in all_results.items():
         g = strategy_group_map[strategy_name]
         group_bucket[g].append((strategy_name, codes))
+
     for group_key, strat_list in group_bucket.items():
         group_display_name = group_cn_name.get(group_key, group_key)
         content += f"📂【{group_display_name}】\n"
         for strat_name, codes in strat_list:
             content += f" 📌 {strat_name}：{len(codes)}只\n"
+        # 本组内多策略重合标的
+        inner_codes = group_inner_overlap.get(group_key, [])
+        content += f" ✨【本组内多策略重合标的｜>=2策略同时选中】共{len(inner_codes)}只\n"
+        if inner_codes:
+            inner_sorted = sorted(inner_codes)
+            content += f"标的清单：{','.join(inner_sorted)}\n"
+            content += "标的明细：\n"
+            for code in inner_sorted:
+                strat_list_code = stock_hit_strategies[code]
+                strat_with_group = []
+                for s_name in strat_list_code:
+                    g_key = strategy_group_map[s_name]
+                    g_cn = group_cn_name.get(g_key, g_key)
+                    strat_with_group.append(f"{s_name}({g_cn})")
+                content += f"{code}｜命中策略：{ '、'.join(strat_with_group) }\n"
+        else:
+            content += "标的清单：无\n标的明细：无\n"
         content += "\n"
+
     payload = {
         "msg_type": "text",
         "content": {"text": content}
@@ -109,6 +140,7 @@ def send_summary_to_feishu(all_results: dict,
     except Exception as e:
         print(f"汇总推送失败: {e}")
         return False
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sequoia-X V2 选股系统")
@@ -210,7 +242,6 @@ def main() -> None:
                     same_group_overlap.append(stock_code)
         logger.info(f"【跨组共振标的】共{len(cross_group_resonance)}只：{cross_group_resonance}")
         logger.info(f"【同组多策略重合标的】共{len(same_group_overlap)}只：{same_group_overlap}")
-
         # ========== 新增辅助统计：策略两两共同命中计数（用于评估策略相关性）
         stock_to_strats = defaultdict(set)
         for strat_name, codes in all_strategy_results.items():
@@ -225,7 +256,6 @@ def main() -> None:
         for (s1, s2), cnt in sorted(pair_count.items(), key=lambda x:x[1], reverse=True):
             logger.info(f"{s1} <--> {s2} 共同选中数量：{cnt}")
         logger.info("============================================")
-
         # ========== 新增：按分组拆分组内重合标的，每个分组单独列出
         group_inner_overlap = defaultdict(list)
         for stock_code, group_set in stock_hit_groups.items():
@@ -237,7 +267,6 @@ def main() -> None:
         for g_name, code_list in group_inner_overlap.items():
             logger.info(f"分组【{g_name}】组内重合标的({len(code_list)}只): {sorted(code_list)}")
         logger.info("============================================")
-
         # ========== 新增：10个技术策略同时命中（排除事件定增PrivatePlacementStrategy） ==========
         all_tech_strategy_sets = []
         for strat_name, codes in all_strategy_results.items():
@@ -260,6 +289,7 @@ def main() -> None:
                 group_inner_overlap,
                 all_tech_intersection,
                 strategy_group_map,
+                stock_hit_strategies,
                 summary_webhook
             )
             logger.info(f"汇总消息推送结果: {push_ok}")
@@ -272,6 +302,7 @@ def main() -> None:
             traceback.print_exc()
         sys.exit(1)
     logger.info("Sequoia-X V2 运行完成")
+
 
 if __name__ == "__main__":
     main()
