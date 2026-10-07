@@ -24,7 +24,7 @@ jobs:
           python-version: '3.10'
       - name: 安装所有第三方依赖
         run: |
-          pip install baostock pandas numpy requests python-dotenv pydantic-settings rich tqdm tenacity
+          pip install baostock pandas numpy requests python-dotenv pydantic-settings rich tqdm tenacity akshare
       # 加载缓存：key每次唯一，确保增量写回
       - name: 加载数据库缓存
         uses: actions/cache@v4
