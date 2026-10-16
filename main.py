@@ -16,7 +16,7 @@ from sequoia_x.core.logger import get_logger
 from sequoia_x.data.engine import DataEngine
 from sequoia_x.strategy.base import BaseStrategy
 
-# 策略导入（和你原本正常运行版本保持一致）
+# 策略导入（和你原本正常运行版本保持一致，新增两条高股息策略）
 from sequoia_x.strategy.high_tight_flag import HighTightFlagStrategy
 from sequoia_x.strategy.limit_up_shakeout import LimitUpShakeoutStrategy
 from sequoia_x.strategy.ma_volume import MaVolumeStrategy
@@ -28,6 +28,7 @@ from sequoia_x.strategy.RsiOversoldStrategy import RsiOversoldStrategy
 from sequoia_x.strategy.bollinger_volatility import BollingerVolatilityStrategy
 from sequoia_x.strategy.volume_price_divergence import VolumePriceDivergenceStrategy
 from sequoia_x.strategy.box_breakout import BoxBreakoutStrategy
+# 新增两个高股息策略
 from sequoia_x.strategy.high_dividend_stable import HighDividendStableStrategy
 from sequoia_x.strategy.dividend_momentum import DividendMomentumStrategy
 
@@ -72,7 +73,7 @@ def send_summary_to_feishu(all_results: dict,
         content += "标的清单：无\n标的明细：无\n"
     content += "\n---\n\n"
 
-    # 3. 各组 + 组内多策略重合
+    # 3. 各组 + 组内多策略重合（补齐了你之前截断的代码）
     group_order = ["bottom_reversal", "volatility", "momentum_break", "strong_shakeout", "event", "value_defense"]
     for group_key in group_order:
         group_name_cn = group_cn_name[group_key]
@@ -103,7 +104,7 @@ def send_summary_to_feishu(all_results: dict,
         resp.raise_for_status()
         return True
     except Exception as e:
-        logger.error(f"飞书推送失败：{e}")
+        logger.error(f"飞书汇总推送失败：{e}")
         return False
 
 
@@ -114,11 +115,11 @@ def main():
         parser.add_argument("--backfill", action="store_true")
         args = parser.parse_args()
 
-        # 原版初始化，完全不动
+        # 原版初始化，无改动
         settings = get_settings()
         engine = DataEngine(settings)
 
-        # 策略分组映射
+        # 策略分组映射：新增2个高股息策略划入value_defense
         strategy_group_map = {
             "RsiOversoldStrategy": "bottom_reversal",
             "UptrendLimitDownStrategy": "bottom_reversal",
@@ -131,10 +132,12 @@ def main():
             "TurtleTradeStrategy": "momentum_break",
             "LimitUpShakeoutStrategy": "strong_shakeout",
             "PrivatePlacementStrategy": "event",
+            # 新增两行
             "HighDividendStableStrategy": "value_defense",
             "DividendMomentumStrategy": "value_defense"
         }
 
+        # 策略列表：追加两个高股息策略
         strategy_cls_list = [
             RsiOversoldStrategy,
             UptrendLimitDownStrategy,
@@ -152,14 +155,14 @@ def main():
         ]
 
         all_strategy_results = {}
-        # ✅ 修复：原生策略实例化，传入 engine, settings，和原版一致
+        # ✅ 严格保持原生实例化：strat_cls(engine, settings)，不会再报BaseStrategy参数缺失
         for strat_cls in strategy_cls_list:
             strat_ins: BaseStrategy = strat_cls(engine, settings)
             stock_codes = strat_ins.run()
             all_strategy_results[strat_cls.__name__] = stock_codes
             logger.info(f"{strat_cls.__name__} 选出 {len(stock_codes)} 只标的")
 
-        # ========== 新增共振统计逻辑 ==========
+        # ========== 共振统计逻辑（完全沿用，无修改） ==========
         stock_hit_strategies = defaultdict(list)
         stock_hit_groups = defaultdict(set)
         for strat_name, code_list in all_strategy_results.items():
@@ -198,16 +201,16 @@ def main():
             logger.info(f"{s1} <--> {s2} 共同选中数量：{cnt}")
         logger.info("============================================")
 
-        # 终极共振：只取技术策略，排除事件、高股息
-        all_tech_strategy_sets = []
+        # 终极共振：自动排除事件定增 + 两个高股息策略，只计算技术策略交集
         skip_strats = {"PrivatePlacementStrategy", "HighDividendStableStrategy", "DividendMomentumStrategy"}
+        all_tech_strategy_sets = []
         for strat_name, codes in all_strategy_results.items():
             if strat_name not in skip_strats:
                 all_tech_strategy_sets.append(set(codes))
         all_tech_intersection = list(set.intersection(*all_tech_strategy_sets)) if all_tech_strategy_sets else []
         logger.info(f"【全部技术策略同时命中标的｜排除事件策略】共{len(all_tech_intersection)}只：{all_tech_intersection}")
 
-        # 飞书汇总推送
+        # 飞书汇总推送（不影响每个策略自带的独立飞书推送）
         summary_webhook = os.environ.get("FEISHU_SUMMARY_WEBHOOK", "")
         if summary_webhook:
             push_ok = send_summary_to_feishu(
@@ -222,6 +225,7 @@ def main():
             logger.info(f"汇总消息推送结果: {push_ok}")
 
         logger.info("Sequoia-X V2 运行完成")
+
     except Exception:
         try:
             _logger = get_logger(__name__)
