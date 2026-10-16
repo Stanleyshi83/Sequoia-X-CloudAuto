@@ -1,16 +1,16 @@
 """
 Sequoia-X V2 主程序入口（GitHub Actions适配版）
 两种运行模式：
-  python main.py               # 日常模式：8进程增量补数据 + 跑策略 + 飞书推送（2~3分钟）
-  python main.py --backfill    # 回填模式：baostock 拉全市场历史K线（首次/补数据用，约12分钟）
+  python main.py               # 日常模式：跑策略 + 飞书推送
+  python main.py --backfill    # 预留回填参数（暂不使用，保持兼容）
 新增功能：
 1. 自动收集所有策略选股结果
 2. 计算多策略重合股票
 3. 按策略分组展示结果，区分【同组多策略选中】vs【跨不同组别同时选中（跨组共振高亮）】
-4. 新增：【10个技术策略同时命中 终极共振】标的展示，排除事件定增策略，避免恒为空
+4. 新增：【10个技术策略同时命中 终极共振】标的展示，排除事件定增策略
 5. 统一推送汇总结果到飞书
-6. 新增：策略两两共现热力统计日志（评估策略相关性）
-7. 新增：按分组拆分、列出组内重合标的，飞书消息内分组展示
+6. 策略两两共现热力统计日志
+7. 按分组拆分、列出组内重合标的，飞书消息内分组展示
 """
 import argparse
 import sys
@@ -20,7 +20,7 @@ import requests
 from collections import Counter, defaultdict
 from itertools import combinations
 from dotenv import load_dotenv
-load_dotenv()  # 本地运行加载.env，GitHub环境自动跳过不影响
+load_dotenv()
 from datetime import date
 import socket
 socket.setdefaulttimeout(10.0)
@@ -55,7 +55,7 @@ def send_summary_to_feishu(all_results: dict,
                             strategy_group_map: dict,
                             stock_hit_strategies: dict,
                             webhook: str) -> bool:
-    """推送汇总结果，新版渲染：删除原版全局多策略重合，保留终极共振+跨组共振+分组组内重合，新增价值防御组"""
+    """推送汇总结果，新版渲染：删除原版全局多策略重合，保留终极共振+跨组共振+分组组内重合"""
     date_str = date.today().strftime("%Y-%m-%d")
     # 分组中文映射
     group_cn_name = {
@@ -79,7 +79,7 @@ def send_summary_to_feishu(all_results: dict,
         content += "今日无标的同时满足全部10个技术策略条件\n"
     content += "\n"
 
-    # ---------------------- 2. 跨组共振（保留，不删除） ----------------------
+    # ---------------------- 2. 跨组共振 ----------------------
     content += f"💎【🌟跨组共振｜跨不同策略组别同时选出，高优先级】共{len(cross_group_resonance)}只\n"
     if cross_group_resonance:
         content += "标的清单：" + ",".join(sorted(cross_group_resonance)) + "\n标的明细：\n"
@@ -90,17 +90,15 @@ def send_summary_to_feishu(all_results: dict,
         content += "标的清单：无\n标的明细：无\n"
     content += "\n---\n\n"
 
-    # ---------------------- 3. 逐分组渲染（含新增价值防御组） ----------------------
+    # ---------------------- 3. 逐分组渲染 ----------------------
     group_order = ["bottom_reversal", "volatility", "momentum_break", "strong_shakeout", "event", "value_defense"]
     for group_key in group_order:
         group_name_cn = group_cn_name[group_key]
         content += f"📂【{group_name_cn}】\n"
-        # 列出本组内所有策略数量
         strat_list_in_group = [s for s, g in strategy_group_map.items() if g == group_key]
         for strat_name in strat_list_in_group:
             cnt = len(all_results.get(strat_name, []))
             content += f" 📌 {strat_name}：{cnt}只\n"
-        # 本组内多策略重合标的
         inner_codes = group_inner_overlap.get(group_key, [])
         content += f" ✨【本组内多策略重合标的｜>=2策略同时选中】共{len(inner_codes)}只\n"
         if inner_codes:
@@ -112,7 +110,6 @@ def send_summary_to_feishu(all_results: dict,
             content += "标的清单：无\n标的明细：无\n"
         content += "\n"
 
-    # 发送飞书消息
     payload = {
         "msg_type": "text",
         "content": {
@@ -132,44 +129,30 @@ def main():
     logger = get_logger(__name__)
     try:
         parser = argparse.ArgumentParser()
-        parser.add_argument("--backfill", action="store_true", help="全量回填历史K线")
+        parser.add_argument("--backfill", action="store_true", help="全量回填历史K线（预留，暂未实现）")
         args = parser.parse_args()
 
-        # 初始化配置与数据引擎（修复：移除backfill参数，和原有引擎定义保持一致）
+        # 初始化引擎，不调用额外update/backfill方法
         settings = get_settings()
         engine = DataEngine(settings=settings)
 
-        if args.backfill:
-            logger.info("==== 进入全量历史K线回填模式 ====")
-            engine.backfill_all_stocks()
-        else:
-            logger.info("==== 进入日常增量补数据+策略选股模式 ====")
-            engine.update_all_stocks()
-
-        # ========== 策略分组配置（新增value_defense分组，放入2个高股息策略） ==========
+        # ========== 策略分组配置 ==========
         strategy_group_map = {
-            # 底部反转组
             "RsiOversoldStrategy": "bottom_reversal",
             "UptrendLimitDownStrategy": "bottom_reversal",
             "VolumePriceDivergenceStrategy": "bottom_reversal",
-            # 波动率蓄势组
             "BollingerVolatilityStrategy": "volatility",
-            # 动量突破组
             "BoxBreakoutStrategy": "momentum_break",
             "HighTightFlagStrategy": "momentum_break",
             "MaVolumeStrategy": "momentum_break",
             "RpsBreakoutStrategy": "momentum_break",
             "TurtleTradeStrategy": "momentum_break",
-            # 强势股洗盘组
             "LimitUpShakeoutStrategy": "strong_shakeout",
-            # 事件选股组
             "PrivatePlacementStrategy": "event",
-            # 价值防御组（新增两条高股息策略）
             "HighDividendStableStrategy": "value_defense",
             "DividendMomentumStrategy": "value_defense"
         }
 
-        # 策略实例列表
         strategy_cls_list = [
             RsiOversoldStrategy,
             UptrendLimitDownStrategy,
@@ -194,7 +177,7 @@ def main():
             all_strategy_results[strat_cls.__name__] = stock_codes
             logger.info(f"{strat_cls.__name__} 选出 {len(stock_codes)} 只标的")
 
-        # ---------------------- 统计每只股票命中了哪些策略、对应分组 ----------------------
+        # 统计每只股票命中策略、分组
         stock_hit_strategies = defaultdict(list)
         stock_hit_groups = defaultdict(set)
         for strat_name, code_list in all_strategy_results.items():
@@ -203,11 +186,9 @@ def main():
                 stock_hit_strategies[code].append(strat_name)
                 stock_hit_groups[code].add(group)
 
-        # 全局多策略重合股票（仅用于日志统计，推送里已删除该区块）
         overlap_stocks = [code for code, strat_list in stock_hit_strategies.items() if len(strat_list) >= 2]
         logger.info(f"多策略重合股票共 {len(overlap_stocks)} 只: {overlap_stocks}")
 
-        # 区分跨组共振 / 同组重合
         cross_group_resonance = []
         same_group_overlap = []
         for stock_code, group_set in stock_hit_groups.items():
@@ -247,7 +228,7 @@ def main():
             logger.info(f"分组【{g_name}】组内重合标的({len(code_list)}只): {sorted(code_list)}")
         logger.info("============================================")
 
-        # 计算终极共振：只取10个技术策略，剔除PrivatePlacement事件策略，不含2个高股息策略
+        # 终极共振：排除事件定增和高股息策略
         all_tech_strategy_sets = []
         for strat_name, codes in all_strategy_results.items():
             if strat_name in ("PrivatePlacementStrategy", "HighDividendStableStrategy", "DividendMomentumStrategy"):
@@ -259,7 +240,7 @@ def main():
             all_tech_intersection = []
         logger.info(f"【全部技术策略同时命中标的｜排除事件策略】共{len(all_tech_intersection)}只：{all_tech_intersection}")
 
-        # 推送飞书汇总消息
+        # 飞书推送汇总
         summary_webhook = os.environ.get("FEISHU_SUMMARY_WEBHOOK", "")
         if summary_webhook:
             push_ok = send_summary_to_feishu(
