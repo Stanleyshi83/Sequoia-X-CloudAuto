@@ -3,6 +3,7 @@ import pandas as pd
 from sequoia_x.core.logger import get_logger
 from sequoia_x.strategy.base import BaseStrategy
 logger = get_logger(__name__)
+
 class HighDividendStableStrategy(BaseStrategy):
     """高股息稳健优选策略。
     数据源：akshare stock_dividend_cninfo() 巨潮分红数据
@@ -18,6 +19,7 @@ class HighDividendStableStrategy(BaseStrategy):
     _MAX_VOL: float = 0.025    # 120日波动率上限
     _MIN_TURNOVER: int = 50000000  # 最低日均成交额
     _MIN_PRICE: float = 2.0    # 最低股价
+
     def run(self) -> list[str]:
         """遍历全市场标的，筛选满足高股息+低波动稳健条件股票代码列表。"""
         try:
@@ -43,17 +45,28 @@ class HighDividendStableStrategy(BaseStrategy):
                 vol_120 = df["daily_return"].iloc[-120:].std()
                 if vol_120 > self._MAX_VOL:
                     continue
-                # 分红数据查询 cninfo，直接传6位代码
-                div_df = ak.stock_dividend_cninfo(symbol=code)
-                if div_df is None or len(div_df) < 2:
+
+                # ==========分红接口【全容错改造，无硬编码列名】==========
+                try:
+                    div_df = ak.stock_dividend_cninfo(symbol=code)
+                except Exception:
+                    # 接口访问失败直接跳过这只票
                     continue
-                # 重点：cninfo字段为【派息比例】，单位：每10股派X元
+                if div_df is None or div_df.empty:
+                    continue
+                # 动态查找派息相关列（兼容不同akshare版本列名）
+                payout_col = None
+                for col in div_df.columns:
+                    if "派息" in str(col) or "现金分红" in str(col):
+                        payout_col = col
+                        break
+                if payout_col is None:
+                    continue
                 # 取最近2期分红
                 recent_div = div_df.head(2)
-                # 派息比例：每10股派发现金，计算股息率 = (派息/10)/当前股价 *100
-                payout_text_series = recent_div["派息比例"]
+                payout_series = recent_div[payout_col]
                 div_rates = []
-                for payout_text in payout_text_series:
+                for payout_text in payout_series:
                     if pd.isna(payout_text) or "派" not in str(payout_text):
                         continue
                     # 提取数字，例如 "派2.5元" → 2.5
