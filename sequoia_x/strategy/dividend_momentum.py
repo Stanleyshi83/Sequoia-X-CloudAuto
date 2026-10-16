@@ -5,7 +5,7 @@ from sequoia_x.strategy.base import BaseStrategy
 logger = get_logger(__name__)
 class DividendMomentumStrategy(BaseStrategy):
     """股息动量价值复合策略。
-    数据源：akshare stock_dividend_cninfo() 巨潮分红数据（原新浪接口废弃替换）
+    数据源：akshare stock_dividend_cninfo() 巨潮分红数据
     逻辑：股息作为安全垫，叠加动量择时、估值位置校验、量能与流动性过滤。
     Attributes:
         webhook_key: 路由到 'dividend_momentum' 飞书机器人。
@@ -36,11 +36,19 @@ class DividendMomentumStrategy(BaseStrategy):
                 ma60 = df["close"].rolling(60).mean().iloc[-1]
                 vol_ma5 = df["volume"].rolling(5).mean().iloc[-1]
                 vol_ma20 = df["volume"].rolling(20).mean().iloc[-1]
-                # 分红数据查询（修复：cninfo接口，直接传code，不带sh/sz前缀，字段改为股息率）
+                # 分红数据查询
                 div_df = ak.stock_dividend_cninfo(symbol=code)
                 if div_df is None or len(div_df) < 1:
                     continue
-                latest_div_rate = float(div_df.iloc[0]["股息率"])
+                latest_payout_text = div_df.iloc[0]["派息比例"]
+                if pd.isna(latest_payout_text) or "派" not in str(latest_payout_text):
+                    continue
+                # 提取每10股派现金额，计算股息率
+                num_str = "".join([c for c in str(latest_payout_text) if c in "0123456789."])
+                if not num_str:
+                    continue
+                cash_per_10 = float(num_str)
+                latest_div_rate = (cash_per_10 / 10.0) / close * 100
                 if latest_div_rate < self._MIN_DIVIDEND_RATE:
                     continue
                 # 动量校验：20日收益为正 + 均线多头
