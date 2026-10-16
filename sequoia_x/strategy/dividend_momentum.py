@@ -3,6 +3,7 @@ import pandas as pd
 from sequoia_x.core.logger import get_logger
 from sequoia_x.strategy.base import BaseStrategy
 logger = get_logger(__name__)
+
 class DividendMomentumStrategy(BaseStrategy):
     """股息动量价值复合策略。
     数据源：akshare stock_dividend_cninfo() 巨潮分红数据
@@ -17,6 +18,7 @@ class DividendMomentumStrategy(BaseStrategy):
     _MIN_DIVIDEND_RATE: float = 2.5
     _MIN_TURNOVER: int = 80000000
     _MIN_PRICE: float = 3.0
+
     def run(self) -> list[str]:
         """遍历全市场标的，筛选股息+动量+价值复合条件股票代码列表。"""
         try:
@@ -36,11 +38,23 @@ class DividendMomentumStrategy(BaseStrategy):
                 ma60 = df["close"].rolling(60).mean().iloc[-1]
                 vol_ma5 = df["volume"].rolling(5).mean().iloc[-1]
                 vol_ma20 = df["volume"].rolling(20).mean().iloc[-1]
-                # 分红数据查询
-                div_df = ak.stock_dividend_cninfo(symbol=code)
-                if div_df is None or len(div_df) < 1:
+
+                # =========分红接口【全容错，无硬编码任何列名】=========
+                try:
+                    div_df = ak.stock_dividend_cninfo(symbol=code)
+                except Exception:
                     continue
-                latest_payout_text = div_df.iloc[0]["派息比例"]
+                if div_df is None or div_df.empty:
+                    continue
+                # 动态匹配派息列，不写死中文列名
+                payout_col = None
+                for col in div_df.columns:
+                    if "派息" in str(col) or "现金分红" in str(col):
+                        payout_col = col
+                        break
+                if payout_col is None:
+                    continue
+                latest_payout_text = div_df.iloc[0][payout_col]
                 if pd.isna(latest_payout_text) or "派" not in str(latest_payout_text):
                     continue
                 # 提取每10股派现金额，计算股息率
@@ -51,6 +65,7 @@ class DividendMomentumStrategy(BaseStrategy):
                 latest_div_rate = (cash_per_10 / 10.0) / close * 100
                 if latest_div_rate < self._MIN_DIVIDEND_RATE:
                     continue
+
                 # 动量校验：20日收益为正 + 均线多头
                 ret_20 = (close - df["close"].iloc[-20]) / df["close"].iloc[-20]
                 if ret_20 <= 0 or ma20 <= ma60:
