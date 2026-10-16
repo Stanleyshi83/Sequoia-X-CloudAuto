@@ -2,12 +2,10 @@
 import pandas as pd
 from sequoia_x.core.logger import get_logger
 from sequoia_x.strategy.base import BaseStrategy
-
 logger = get_logger(__name__)
-
 class DividendMomentumStrategy(BaseStrategy):
     """股息动量价值复合策略。
-    数据源：akshare stock_dividend_sina() 新浪分红数据
+    数据源：akshare stock_dividend_cninfo() 巨潮分红数据（原新浪接口废弃替换）
     逻辑：股息作为安全垫，叠加动量择时、估值位置校验、量能与流动性过滤。
     Attributes:
         webhook_key: 路由到 'dividend_momentum' 飞书机器人。
@@ -19,7 +17,6 @@ class DividendMomentumStrategy(BaseStrategy):
     _MIN_DIVIDEND_RATE: float = 2.5
     _MIN_TURNOVER: int = 80000000
     _MIN_PRICE: float = 3.0
-
     def run(self) -> list[str]:
         """遍历全市场标的，筛选股息+动量+价值复合条件股票代码列表。"""
         try:
@@ -27,10 +24,8 @@ class DividendMomentumStrategy(BaseStrategy):
         except Exception as exc:
             logger.error(f"DividendMomentumStrategy 导入akshare失败：{exc}")
             return []
-
         selected_symbols = []
         stock_list = self.engine.get_all_symbols()
-
         for code in stock_list:
             try:
                 df = self.engine.get_ohlcv(code)
@@ -41,15 +36,11 @@ class DividendMomentumStrategy(BaseStrategy):
                 ma60 = df["close"].rolling(60).mean().iloc[-1]
                 vol_ma5 = df["volume"].rolling(5).mean().iloc[-1]
                 vol_ma20 = df["volume"].rolling(20).mean().iloc[-1]
-                # 分红数据查询
-                if code.startswith("6"):
-                    ak_code = f"sh{code}"
-                else:
-                    ak_code = f"sz{code}"
-                div_df = ak.stock_dividend_sina(symbol=ak_code)
+                # 分红数据查询（修复：cninfo接口，直接传code，不带sh/sz前缀，字段改为股息率）
+                div_df = ak.stock_dividend_cninfo(symbol=code)
                 if div_df is None or len(div_df) < 1:
                     continue
-                latest_div_rate = float(div_df.iloc[0]["分红率"])
+                latest_div_rate = float(div_df.iloc[0]["股息率"])
                 if latest_div_rate < self._MIN_DIVIDEND_RATE:
                     continue
                 # 动量校验：20日收益为正 + 均线多头
@@ -73,6 +64,5 @@ class DividendMomentumStrategy(BaseStrategy):
             except Exception as exc:
                 logger.warning(f"DividendMomentumStrategy [{code}] 计算异常：{exc}")
                 continue
-
         logger.info(f"DividendMomentumStrategy 选出 {len(selected_symbols)} 只股票")
         return selected_symbols
