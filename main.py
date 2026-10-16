@@ -135,9 +135,16 @@ def main():
         parser.add_argument("--backfill", action="store_true", help="全量回填历史K线")
         args = parser.parse_args()
 
-        # 初始化配置与数据引擎
+        # 初始化配置与数据引擎（修复：移除backfill参数，和原有引擎定义保持一致）
         settings = get_settings()
-        engine = DataEngine(settings, backfill=args.backfill)
+        engine = DataEngine(settings=settings)
+
+        if args.backfill:
+            logger.info("==== 进入全量历史K线回填模式 ====")
+            engine.backfill_all_stocks()
+        else:
+            logger.info("==== 进入日常增量补数据+策略选股模式 ====")
+            engine.update_all_stocks()
 
         # ========== 策略分组配置（新增value_defense分组，放入2个高股息策略） ==========
         strategy_group_map = {
