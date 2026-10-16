@@ -130,153 +130,152 @@ def send_summary_to_feishu(all_results: dict,
 
 def main():
     logger = get_logger(__name__)
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--backfill", action="store_true", help="全量回填历史K线")
-    args = parser.parse_args()
-
-    # 初始化配置与数据引擎
-    settings = get_settings()
-    engine = DataEngine(settings, backfill=args.backfill)
-
-    # ========== 策略分组配置（新增value_defense分组，放入2个高股息策略） ==========
-    strategy_group_map = {
-        # 底部反转组
-        "RsiOversoldStrategy": "bottom_reversal",
-        "UptrendLimitDownStrategy": "bottom_reversal",
-        "VolumePriceDivergenceStrategy": "bottom_reversal",
-        # 波动率蓄势组
-        "BollingerVolatilityStrategy": "volatility",
-        # 动量突破组
-        "BoxBreakoutStrategy": "momentum_break",
-        "HighTightFlagStrategy": "momentum_break",
-        "MaVolumeStrategy": "momentum_break",
-        "RpsBreakoutStrategy": "momentum_break",
-        "TurtleTradeStrategy": "momentum_break",
-        # 强势股洗盘组
-        "LimitUpShakeoutStrategy": "strong_shakeout",
-        # 事件选股组
-        "PrivatePlacementStrategy": "event",
-        # 价值防御组（新增两条高股息策略）
-        "HighDividendStableStrategy": "value_defense",
-        "DividendMomentumStrategy": "value_defense"
-    }
-
-    # 策略实例列表
-    strategy_cls_list = [
-        RsiOversoldStrategy,
-        UptrendLimitDownStrategy,
-        VolumePriceDivergenceStrategy,
-        BollingerVolatilityStrategy,
-        BoxBreakoutStrategy,
-        HighTightFlagStrategy,
-        MaVolumeStrategy,
-        RpsBreakoutStrategy,
-        TurtleTradeStrategy,
-        LimitUpShakeoutStrategy,
-        PrivatePlacementStrategy,
-        HighDividendStableStrategy,
-        DividendMomentumStrategy
-    ]
-
-    # 批量运行全部策略
-    all_strategy_results = {}
-    for strat_cls in strategy_cls_list:
-        strat_ins: BaseStrategy = strat_cls(engine)
-        stock_codes = strat_ins.run()
-        all_strategy_results[strat_cls.__name__] = stock_codes
-        logger.info(f"{strat_cls.__name__} 选出 {len(stock_codes)} 只标的")
-
-    # ---------------------- 统计每只股票命中了哪些策略、对应分组 ----------------------
-    stock_hit_strategies = defaultdict(list)
-    stock_hit_groups = defaultdict(set)
-    for strat_name, code_list in all_strategy_results.items():
-        group = strategy_group_map[strat_name]
-        for code in code_list:
-            stock_hit_strategies[code].append(strat_name)
-            stock_hit_groups[code].add(group)
-
-    # 全局多策略重合股票（仅用于日志统计，推送里已删除该区块）
-    overlap_stocks = [code for code, strat_list in stock_hit_strategies.items() if len(strat_list) >= 2]
-    logger.info(f"多策略重合股票共 {len(overlap_stocks)} 只: {overlap_stocks}")
-
-    # 区分跨组共振 / 同组重合
-    cross_group_resonance = []
-    same_group_overlap = []
-    for stock_code, group_set in stock_hit_groups.items():
-        hit_strats = stock_hit_strategies[stock_code]
-        if len(hit_strats) >= 2:
-            if len(group_set) >= 2:
-                cross_group_resonance.append(stock_code)
-            else:
-                same_group_overlap.append(stock_code)
-    logger.info(f"【跨组共振标的】共{len(cross_group_resonance)}只：{cross_group_resonance}")
-    logger.info(f"【同组多策略重合标的】共{len(same_group_overlap)}只：{same_group_overlap}")
-
-    # 策略两两共现热力统计日志
-    stock_to_strats = defaultdict(set)
-    for strat_name, codes in all_strategy_results.items():
-        for code in set(codes):
-            stock_to_strats[code].add(strat_name)
-    pair_count = defaultdict(int)
-    for _, strat_set in stock_to_strats.items():
-        strat_list = sorted(strat_set)
-        for s1, s2 in combinations(strat_list, 2):
-            pair_count[(s1, s2)] += 1
-    logger.info("==== 策略两两共同命中统计（热力原始数据）====")
-    for (s1, s2), cnt in sorted(pair_count.items(), key=lambda x: x[1], reverse=True):
-        logger.info(f"{s1} <--> {s2} 共同选中数量：{cnt}")
-    logger.info("============================================")
-
-    # 拆分各分组内部重合标的
-    group_inner_overlap = defaultdict(list)
-    for stock_code, group_set in stock_hit_groups.items():
-        hit_strats = stock_hit_strategies[stock_code]
-        if len(hit_strats) >= 2 and len(group_set) == 1:
-            g = list(group_set)[0]
-            group_inner_overlap[g].append(stock_code)
-    logger.info("==== 各分组内部多策略重合标的 ====")
-    for g_name, code_list in group_inner_overlap.items():
-        logger.info(f"分组【{g_name}】组内重合标的({len(code_list)}只): {sorted(code_list)}")
-    logger.info("============================================")
-
-    # 计算终极共振：只取10个技术策略，剔除PrivatePlacement事件策略，不含2个高股息策略
-    all_tech_strategy_sets = []
-    for strat_name, codes in all_strategy_results.items():
-        if strat_name in ("PrivatePlacementStrategy", "HighDividendStableStrategy", "DividendMomentumStrategy"):
-            continue
-        all_tech_strategy_sets.append(set(codes))
-    if all_tech_strategy_sets:
-        all_tech_intersection = list(set.intersection(*all_tech_strategy_sets))
-    else:
-        all_tech_intersection = []
-    logger.info(f"【全部技术策略同时命中标的｜排除事件策略】共{len(all_tech_intersection)}只：{all_tech_intersection}")
-
-    # 推送飞书汇总消息
-    summary_webhook = os.environ.get("FEISHU_SUMMARY_WEBHOOK", "")
-    if summary_webhook:
-        push_ok = send_summary_to_feishu(
-            all_strategy_results,
-            overlap_stocks,
-            cross_group_resonance,
-            same_group_overlap,
-            group_inner_overlap,
-            all_tech_intersection,
-            strategy_group_map,
-            stock_hit_strategies,
-            summary_webhook
-        )
-        logger.info(f"汇总消息推送结果: {push_ok}")
-
-except Exception:
     try:
-        _logger = get_logger(__name__)
-        _logger.exception("主流程发生未捕获异常，程序终止")
-    except Exception:
-        import traceback
-        traceback.print_exc()
-    sys.exit(1)
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--backfill", action="store_true", help="全量回填历史K线")
+        args = parser.parse_args()
 
-logger.info("Sequoia-X V2 运行完成")
+        # 初始化配置与数据引擎
+        settings = get_settings()
+        engine = DataEngine(settings, backfill=args.backfill)
+
+        # ========== 策略分组配置（新增value_defense分组，放入2个高股息策略） ==========
+        strategy_group_map = {
+            # 底部反转组
+            "RsiOversoldStrategy": "bottom_reversal",
+            "UptrendLimitDownStrategy": "bottom_reversal",
+            "VolumePriceDivergenceStrategy": "bottom_reversal",
+            # 波动率蓄势组
+            "BollingerVolatilityStrategy": "volatility",
+            # 动量突破组
+            "BoxBreakoutStrategy": "momentum_break",
+            "HighTightFlagStrategy": "momentum_break",
+            "MaVolumeStrategy": "momentum_break",
+            "RpsBreakoutStrategy": "momentum_break",
+            "TurtleTradeStrategy": "momentum_break",
+            # 强势股洗盘组
+            "LimitUpShakeoutStrategy": "strong_shakeout",
+            # 事件选股组
+            "PrivatePlacementStrategy": "event",
+            # 价值防御组（新增两条高股息策略）
+            "HighDividendStableStrategy": "value_defense",
+            "DividendMomentumStrategy": "value_defense"
+        }
+
+        # 策略实例列表
+        strategy_cls_list = [
+            RsiOversoldStrategy,
+            UptrendLimitDownStrategy,
+            VolumePriceDivergenceStrategy,
+            BollingerVolatilityStrategy,
+            BoxBreakoutStrategy,
+            HighTightFlagStrategy,
+            MaVolumeStrategy,
+            RpsBreakoutStrategy,
+            TurtleTradeStrategy,
+            LimitUpShakeoutStrategy,
+            PrivatePlacementStrategy,
+            HighDividendStableStrategy,
+            DividendMomentumStrategy
+        ]
+
+        # 批量运行全部策略
+        all_strategy_results = {}
+        for strat_cls in strategy_cls_list:
+            strat_ins: BaseStrategy = strat_cls(engine)
+            stock_codes = strat_ins.run()
+            all_strategy_results[strat_cls.__name__] = stock_codes
+            logger.info(f"{strat_cls.__name__} 选出 {len(stock_codes)} 只标的")
+
+        # ---------------------- 统计每只股票命中了哪些策略、对应分组 ----------------------
+        stock_hit_strategies = defaultdict(list)
+        stock_hit_groups = defaultdict(set)
+        for strat_name, code_list in all_strategy_results.items():
+            group = strategy_group_map[strat_name]
+            for code in code_list:
+                stock_hit_strategies[code].append(strat_name)
+                stock_hit_groups[code].add(group)
+
+        # 全局多策略重合股票（仅用于日志统计，推送里已删除该区块）
+        overlap_stocks = [code for code, strat_list in stock_hit_strategies.items() if len(strat_list) >= 2]
+        logger.info(f"多策略重合股票共 {len(overlap_stocks)} 只: {overlap_stocks}")
+
+        # 区分跨组共振 / 同组重合
+        cross_group_resonance = []
+        same_group_overlap = []
+        for stock_code, group_set in stock_hit_groups.items():
+            hit_strats = stock_hit_strategies[stock_code]
+            if len(hit_strats) >= 2:
+                if len(group_set) >= 2:
+                    cross_group_resonance.append(stock_code)
+                else:
+                    same_group_overlap.append(stock_code)
+        logger.info(f"【跨组共振标的】共{len(cross_group_resonance)}只：{cross_group_resonance}")
+        logger.info(f"【同组多策略重合标的】共{len(same_group_overlap)}只：{same_group_overlap}")
+
+        # 策略两两共现热力统计日志
+        stock_to_strats = defaultdict(set)
+        for strat_name, codes in all_strategy_results.items():
+            for code in set(codes):
+                stock_to_strats[code].add(strat_name)
+        pair_count = defaultdict(int)
+        for _, strat_set in stock_to_strats.items():
+            strat_list = sorted(strat_set)
+            for s1, s2 in combinations(strat_list, 2):
+                pair_count[(s1, s2)] += 1
+        logger.info("==== 策略两两共同命中统计（热力原始数据）====")
+        for (s1, s2), cnt in sorted(pair_count.items(), key=lambda x: x[1], reverse=True):
+            logger.info(f"{s1} <--> {s2} 共同选中数量：{cnt}")
+        logger.info("============================================")
+
+        # 拆分各分组内部重合标的
+        group_inner_overlap = defaultdict(list)
+        for stock_code, group_set in stock_hit_groups.items():
+            hit_strats = stock_hit_strategies[stock_code]
+            if len(hit_strats) >= 2 and len(group_set) == 1:
+                g = list(group_set)[0]
+                group_inner_overlap[g].append(stock_code)
+        logger.info("==== 各分组内部多策略重合标的 ====")
+        for g_name, code_list in group_inner_overlap.items():
+            logger.info(f"分组【{g_name}】组内重合标的({len(code_list)}只): {sorted(code_list)}")
+        logger.info("============================================")
+
+        # 计算终极共振：只取10个技术策略，剔除PrivatePlacement事件策略，不含2个高股息策略
+        all_tech_strategy_sets = []
+        for strat_name, codes in all_strategy_results.items():
+            if strat_name in ("PrivatePlacementStrategy", "HighDividendStableStrategy", "DividendMomentumStrategy"):
+                continue
+            all_tech_strategy_sets.append(set(codes))
+        if all_tech_strategy_sets:
+            all_tech_intersection = list(set.intersection(*all_tech_strategy_sets))
+        else:
+            all_tech_intersection = []
+        logger.info(f"【全部技术策略同时命中标的｜排除事件策略】共{len(all_tech_intersection)}只：{all_tech_intersection}")
+
+        # 推送飞书汇总消息
+        summary_webhook = os.environ.get("FEISHU_SUMMARY_WEBHOOK", "")
+        if summary_webhook:
+            push_ok = send_summary_to_feishu(
+                all_strategy_results,
+                overlap_stocks,
+                cross_group_resonance,
+                same_group_overlap,
+                group_inner_overlap,
+                all_tech_intersection,
+                strategy_group_map,
+                stock_hit_strategies,
+                summary_webhook
+            )
+            logger.info(f"汇总消息推送结果: {push_ok}")
+        logger.info("Sequoia-X V2 运行完成")
+    except Exception:
+        try:
+            _logger = get_logger(__name__)
+            _logger.exception("主流程发生未捕获异常，程序终止")
+        except Exception:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
 
 
 if __name__ == "__main__":
