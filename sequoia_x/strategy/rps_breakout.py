@@ -4,6 +4,7 @@ from sequoia_x.strategy.base import BaseStrategy
 from sequoia_x.core.logger import get_logger
 logger = get_logger(__name__)
 
+
 class RpsBreakoutStrategy(BaseStrategy):
     """RPS 极强动量突破策略【完整优化版】
     优化点：
@@ -25,7 +26,10 @@ class RpsBreakoutStrategy(BaseStrategy):
     vol_spike_multiplier = 3         # 单日成交量不超过10日均量的倍数
     vol_avg_window = 10              # 均量计算周期
 
-    def run(self) -> list[str]:
+    def run(self, stock_code_list: list[str]) -> list[str]:
+        """
+        注：本策略直接读取数据库全量日线计算RPS，stock_code_list仅做接口签名适配占位。
+        """
         try:
             with sqlite3.connect(self.engine.db_path) as conn:
                 # 读取字段已按你实际表结构修正：volume + turnover
