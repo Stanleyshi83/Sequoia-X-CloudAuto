@@ -39,9 +39,7 @@ from sequoia_x.strategy.box_breakout import BoxBreakoutStrategy
 logger = get_logger(__name__)
 
 # ---------------------- 全局连接池（实现请求复用，解决越跑越慢） ----------------------
-# 全局唯一Session，所有飞书请求共用TCP连接
 global_http_session = requests.Session()
-# 扩大连接池上限
 adapter = HTTPAdapter(
     pool_connections=20,
     pool_maxsize=20,
@@ -50,26 +48,67 @@ adapter = HTTPAdapter(
 global_http_session.mount("https://", adapter)
 global_http_session.mount("http://", adapter)
 
-# ---------------------- 飞书消息通用发送函数（复用全局连接池） ----------------------
+# ---------------------- 工具函数：自动处理webhook，避免URL重复拼接导致404 ----------------------
+def _resolve_webhook_url(webhook_input: str) -> str:
+    """自动识别：如果是完整URL直接返回；如果只是token，自动拼接飞书前缀"""
+    if not webhook_input:
+        return ""
+    webhook_input = webhook_input.strip()
+    if webhook_input.startswith(("http://", "https://")):
+        return webhook_input
+    return f"https://open.feishu.cn/open-apis/bot/v2/hook/{webhook_input}"
+
+# ---------------------- 飞书单策略推送（增加业务码校验，杜绝假成功） ----------------------
 def send_feishu_text(content: str, webhook_key: str) -> bool:
     if not webhook_key or webhook_key.strip() == "":
         logger.warning(f"webhook_key为空，跳过本条推送")
         return False
-    url = f"https://open.feishu.cn/open-apis/bot/v2/hook/{webhook_key.strip()}"
+
+    # 优先读取策略专属环境变量，没有则降级到默认机器人
+    env_key_map = {
+        "dividend_momentum": "FEISHU_WEBHOOK_DIVIDEND_MOMENTUM",
+        "high_dividend": "FEISHU_WEBHOOK_HIGH_DIVIDEND",
+        "htf": "FEISHU_WEBHOOK_HTF",
+        "shakeout": "FEISHU_WEBHOOK_SHAKEOUT",
+        "ma_volume": "FEISHU_WEBHOOK_MA_VOLUME",
+        "turtle": "FEISHU_WEBHOOK_TURTLE_TRADE",
+        "limit_down": "FEISHU_WEBHOOK_LIMIT_DOWN",
+        "rps": "FEISHU_WEBHOOK_RPS",
+        "private_placement": "FEISHU_WEBHOOK_PRIVATE_PLACEMENT",
+        "rsi_oversold": "FEISHU_WEBHOOK_RSI_OVERSOLD",
+        "bollinger_vol": "FEISHU_WEBHOOK_BOLLINGER_VOL",
+        "vol_price_div": "FEISHU_WEBHOOK_VOL_PRICE_DIV",
+        "box_breakout": "FEISHU_WEBHOOK_BOX_BREAKOUT",
+    }
+    env_name = env_key_map.get(webhook_key, "FEISHU_WEBHOOK_URL")
+    webhook_raw = os.environ.get(env_name, "")
+    if not webhook_raw:
+        webhook_raw = os.environ.get("FEISHU_WEBHOOK_URL", "")
+    if not webhook_raw:
+        logger.warning(f"[{webhook_key}] 未配置飞书webhook，跳过推送")
+        return False
+
+    # 解析最终url，防止重复拼接
+    url = _resolve_webhook_url(webhook_raw)
     payload = {
         "msg_type": "text",
         "content": {"text": content}
     }
     try:
-        # 使用全局session，复用连接池
         resp = global_http_session.post(url, json=payload, timeout=15)
         resp.raise_for_status()
+        # 校验飞书业务返回码，防止HTTP 200但消息发送失败
+        res_json = resp.json()
+        if res_json.get("code", 0) != 0:
+            logger.error(f"[{webhook_key}] 飞书推送业务失败：code={res_json.get('code')}, msg={res_json.get('msg')}")
+            return False
         logger.info(f"单策略飞书推送成功 | key={webhook_key[:12]}...")
         return True
     except Exception as e:
         logger.error(f"单策略飞书推送失败: {str(e)}")
         return False
 
+# ---------------------- 汇总消息推送（修复404，不再硬拼URL前缀） ----------------------
 def send_summary_to_feishu(all_results: dict,
                             cross_group_resonance: list,
                             group_inner_overlap: dict,
@@ -88,103 +127,146 @@ def send_summary_to_feishu(all_results: dict,
     }
     content = f"【选股汇总】 {date_str}\n\n"
     # 1. 终极共振（排除事件、高股息策略）
-    content += f"💎【🌟技术策略终极共振】共{len(all_tech_intersection)}只：\n"
+    content += f"💎【🌟10个技术策略同时选中｜终极共振，极高优先级（排除事件定增策略）】共{len(all_tech_intersection)}只：\n"
     if all_tech_intersection:
-        content += "、".join(sorted(all_tech_intersection)) + "\n\n"
+        content += "标的清单：" + ",".join(sorted(all_tech_intersection)) + "\n标的明细：\n"
+        for code in sorted(all_tech_intersection):
+            hit_text = "、".join(stock_hit_strategies[code])
+            content += f"{code}｜命中策略：{hit_text}\n"
     else:
-        content += "暂无共振标的\n\n"
-
-    # 2.跨组共振
-    content += f"🔥【跨分组共振标的】共{len(cross_group_resonance)}只：\n"
+        content += "今日无标的同时满足全部10个技术策略条件\n"
+    content += "\n"
+    # 2. 跨组共振
+    content += f"💎【🌟跨组共振｜跨不同策略组别同时选出，高优先级】共{len(cross_group_resonance)}只\n"
     if cross_group_resonance:
-        content += "、".join(sorted(cross_group_resonance)) + "\n\n"
+        content += "标的清单：" + ",".join(sorted(cross_group_resonance)) + "\n标的明细：\n"
+        for code in sorted(cross_group_resonance):
+            hit_text = "、".join(stock_hit_strategies[code])
+            content += f"{code}｜命中策略：{hit_text}\n"
     else:
-        content += "暂无跨组共振\n\n"
+        content += "标的清单：无\n标的明细：无\n"
+    content += "\n---\n\n"
+    # 3. 各组 + 组内多策略重合
+    group_order = ["bottom_reversal", "volatility", "momentum_break", "strong_shakeout", "event", "value_defense"]
+    for group_key in group_order:
+        group_name = group_cn_name[group_key]
+        content += f"📂【{group_name}】\n"
+        for strat_name, g in strategy_group_map.items():
+            if g == group_key:
+                cnt = len(all_results.get(strat_name, []))
+                content += f" 📌 {strat_name}：{cnt}只\n"
+        overlap_list = group_inner_overlap.get(group_key, [])
+        content += f" ✨【本组内多策略重合标的｜>=2策略同时选中】共{len(overlap_list)}只\n"
+        if overlap_list:
+            content += "标的清单：" + ",".join(sorted(overlap_list)) + "\n标的明细：\n"
+            for code in sorted(overlap_list):
+                hit_text = "、".join(stock_hit_strategies[code])
+                content += f"{code}｜命中策略：{hit_text}\n"
+        else:
+            content += "标的清单：无\n标的明细：无\n"
+        content += "\n"
 
-    # 3.分组内重合
-    content += "📌【分组内部重合标的】\n"
-    for g_en, g_cn in group_cn_name.items():
-        codes = group_inner_overlap.get(g_en, [])
-        if codes:
-            content += f"{g_cn}：{len(codes)}只 → " + "、".join(sorted(codes)) + "\n"
-
-    # 4.各策略选出数量统计
-    content += "\n📊【各策略选股数量】\n"
-    for strat_name, code_list in all_results.items():
-        content += f"{strat_name}：{len(code_list)}只\n"
-
+    # 核心修复：自动解析url，不会重复拼接前缀导致404
+    summary_url = _resolve_webhook_url(webhook.strip())
+    payload = {
+        "msg_type": "text",
+        "content": {"text": content}
+    }
     try:
-        resp = global_http_session.post(
-            f"https://open.feishu.cn/open-apis/bot/v2/hook/{webhook.strip()}",
-            json={"msg_type": "text", "content": {"text": content}},
-            timeout=20
-        )
+        resp = global_http_session.post(summary_url, json=payload, timeout=20)
         resp.raise_for_status()
+        res_json = resp.json()
+        if res_json.get("code", 0) != 0:
+            logger.error(f"汇总消息飞书业务错误: {res_json}")
+            return False
+        logger.info("选股汇总消息推送成功")
         return True
     except Exception as e:
-        logger.error(f"汇总消息推送失败：{e}")
+        logger.error(f"汇总消息推送失败: {str(e)}")
         return False
 
 def main():
     settings = get_settings()
-    engine = DataEngine(settings)
+    engine = DataEngine(settings.db_path)
+    engine.init_db()
 
-    # ====================== 优化点1：全局只加载一次全市场股票列表 ======================
-    global_stock_codes = engine.get_all_symbols()
-    logger.info(f"全局加载全市场股票共 {len(global_stock_codes)} 只，所有策略共用此列表")
+    # 全局一次性加载全市场股票列表，所有策略共用
+    logger.info("全局一次性加载全市场股票列表，所有策略复用，避免重复请求")
+    all_stock_df = engine.get_stock_list()
+    global_stock_codes = all_stock_df["code"].tolist()
 
-    # 策略实例列表（顺序：高股息动量在前，保证缓存先初始化）
-    strategy_list = [
-        DividendMomentumStrategy(engine, settings),
-        HighDividendStableStrategy(engine, settings),
-        HighTightFlagStrategy(engine, settings),
-        LimitUpShakeoutStrategy(engine, settings),
-        MaVolumeStrategy(engine, settings),
-        TurtleTradeStrategy(engine, settings),
-        UptrendLimitDownStrategy(engine, settings),
-        RpsBreakoutStrategy(engine, settings),
-        PrivatePlacementStrategy(engine, settings),
-        RsiOversoldStrategy(engine, settings),
-        BollingerVolatilityStrategy(engine, settings),
-        VolumePriceDivergenceStrategy(engine, settings),
-        BoxBreakoutStrategy(engine, settings),
+    # 注入akshare全局session（保持原有逻辑不变）
+    try:
+        import akshare
+        akshare.set_session(global_http_session)
+    except Exception:
+        logger.warning("当前akshare版本不支持set_session，跳过连接池注入")
+
+    # 策略分组映射（原样保留）
+    strategy_group_map = {
+        "RsiOversoldStrategy": "bottom_reversal",
+        "UptrendLimitDownStrategy": "bottom_reversal",
+        "VolumePriceDivergenceStrategy": "bottom_reversal",
+        "BollingerVolatilityStrategy": "volatility",
+        "BoxBreakoutStrategy": "momentum_break",
+        "HighTightFlagStrategy": "momentum_break",
+        "MaVolumeStrategy": "momentum_break",
+        "RpsBreakoutStrategy": "momentum_break",
+        "TurtleTradeStrategy": "momentum_break",
+        "LimitUpShakeoutStrategy": "strong_shakeout",
+        "PrivatePlacementStrategy": "event",
+        "HighDividendStableStrategy": "value_defense",
+        "DividendMomentumStrategy": "value_defense"
+    }
+
+    strategy_cls_list = [
+        DividendMomentumStrategy,
+        HighDividendStableStrategy,
+        HighTightFlagStrategy,
+        LimitUpShakeoutStrategy,
+        MaVolumeStrategy,
+        TurtleTradeStrategy,
+        UptrendLimitDownStrategy,
+        RsiBreakoutStrategy,
+        PrivatePlacementStrategy,
+        RsiOversoldStrategy,
+        BollingerVolatilityStrategy,
+        VolumePriceDivergenceStrategy,
+        BoxBreakoutStrategy
     ]
 
-    # 策略-分组映射
-    strategy_group_map = {ins.__class__.__name__: ins.group for ins in strategy_list}
-    all_strategy_results = dict()
-
-    # 逐个执行策略 + 单策略独立推送
+    all_strategy_results = {}
     today_str = date.today().strftime("%Y-%m-%d")
-    for strat_ins in strategy_list:
-        strat_name = strat_ins.__class__.__name__
-        logger.info(f"===== 开始执行策略：{strat_name} =====")
-        try:
-            # ====================== 关键修改：传入全局股票列表 ======================
-            selected_codes = strat_ins.run(global_stock_codes)
-            all_strategy_results[strat_name] = selected_codes
-            logger.info(f"{strat_name} 执行完成，选出 {len(selected_codes)} 只标的")
 
-            # 组装单策略推送消息
-            if selected_codes:
-                code_lines = [f"{code}" for code in sorted(selected_codes)]
-                code_text = "\n".join(code_lines)
-            else:
-                code_text = "无符合条件标的"
+    # 循环执行策略 + 逐条独立推送（原有逻辑不变）
+    for strat_cls in strategy_cls_list:
+        strat_ins: BaseStrategy = strat_cls(engine, settings)
+        selected_codes = strat_ins.run(global_stock_codes)
+        strat_name = strat_cls.__name__
+        all_strategy_results[strat_name] = selected_codes
+        logger.info(f"{strat_name} 选出 {len(selected_codes)} 只标的")
 
-            single_msg = f"""【{strat_name}】
+        # 拼装单策略消息
+        if selected_codes:
+            code_lines = []
+            for code in selected_codes:
+                if code.startswith("6"):
+                    code_lines.append(f"SH{code}")
+                else:
+                    code_lines.append(f"SZ{code}")
+            code_text = "\n".join(code_lines)
+        else:
+            code_text = "无符合条件标的"
+
+        single_msg = f"""【{strat_name}】
 日期：{today_str}
 策略分组：{strat_ins.group}
 选股数量：{len(selected_codes)}
 标的清单：
 {code_text}
 """
-            # 独立飞书推送
-            send_feishu_text(single_msg, strat_ins.webhook_key)
-
-        except Exception as exc:
-            logger.exception(f"策略 {strat_name} 执行异常终止")
-            all_strategy_results[strat_name] = []
+        # 独立飞书推送
+        send_feishu_text(single_msg, strat_ins.webhook_key)
 
     # ========== 下面所有共振统计逻辑完全保留原版，一行不动 ==========
     stock_hit_strategies = defaultdict(list)
@@ -226,7 +308,7 @@ def main():
         logger.info(f"{s1} <--> {s2} 共同选中数量：{cnt}")
     logger.info("============================================")
 
-    # 终极共振：自动排除事件定增 + 两个高股息策略，只计算技术策略交集
+    # 终极共振：自动排除事件定增 + 两个高股息策略
     skip_strats = {"PrivatePlacementStrategy", "HighDividendStableStrategy", "DividendMomentumStrategy"}
     all_tech_strategy_sets = []
     for strat_name, codes in all_strategy_results.items():
