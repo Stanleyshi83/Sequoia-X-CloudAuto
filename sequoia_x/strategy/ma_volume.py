@@ -4,6 +4,7 @@ from sequoia_x.core.logger import get_logger
 from sequoia_x.strategy.base import BaseStrategy
 logger = get_logger(__name__)
 
+
 class MaVolumeStrategy(BaseStrategy):
     """均线+成交量选股策略。
     选股条件（全部向量化，严禁 iterrows）：
@@ -16,13 +17,13 @@ class MaVolumeStrategy(BaseStrategy):
     webhook_key: str = "ma_volume"
     group: str = "momentum_break"
 
-    def run(self) -> list[str]:
+    def run(self, stock_code_list: list[str]) -> list[str]:
         """
         遍历全市场，返回满足均线金叉+放量条件的股票代码列表。
         Returns:
             满足条件的股票代码列表。
         """
-        symbols = self.engine.get_local_symbols()
+        symbols = stock_code_list
         selected: list[str] = []
         for symbol in symbols:
             try:
