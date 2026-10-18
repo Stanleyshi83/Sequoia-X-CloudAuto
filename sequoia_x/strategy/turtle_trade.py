@@ -4,6 +4,7 @@ from sequoia_x.core.logger import get_logger
 from sequoia_x.strategy.base import BaseStrategy
 logger = get_logger(__name__)
 
+
 class TurtleTradeStrategy(BaseStrategy):
     """海龟交易策略（A股防诱多改良版）。
     选股条件（向量化，严禁 iterrows）：
@@ -54,11 +55,11 @@ class TurtleTradeStrategy(BaseStrategy):
             bs.logout()
         return market_caps
 
-    def run(self) -> list[str]:
+    def run(self, stock_code_list: list[str]) -> list[str]:
         """
         遍历全市场，返回满足海龟突破条件的股票代码列表。
         """
-        symbols = self.engine.get_local_symbols()
+        symbols = stock_code_list
         candidates: list[str] = []
         for symbol in symbols:
             try:
