@@ -2,6 +2,8 @@ import pandas as pd
 from sequoia_x.core.logger import get_logger
 from sequoia_x.strategy.base import BaseStrategy
 logger = get_logger(__name__)
+
+
 def calculate_rsi(series, period=6):
     delta = series.diff()
     gain = delta.where(delta > 0, 0)
@@ -11,6 +13,8 @@ def calculate_rsi(series, period=6):
     rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
     return rsi
+
+
 class RsiOversoldStrategy(BaseStrategy):
     """RSI超跌反转策略：RSI6低于25，同时收盘价站上20日均线。
     Attributes:
@@ -19,8 +23,9 @@ class RsiOversoldStrategy(BaseStrategy):
     """
     webhook_key: str = "rsi_oversold"
     group: str = "bottom_reversal"
-    def run(self) -> list[str]:
-        symbols = self.engine.get_local_symbols()
+
+    def run(self, stock_code_list: list[str]) -> list[str]:
+        symbols = stock_code_list
         selected: list[str] = []
         for symbol in symbols:
             try:
