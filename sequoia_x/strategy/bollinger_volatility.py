@@ -1,8 +1,8 @@
 import pandas as pd
 from sequoia_x.core.logger import get_logger
 from sequoia_x.strategy.base import BaseStrategy
-
 logger = get_logger(__name__)
+
 
 class BollingerVolatilityStrategy(BaseStrategy):
     """
@@ -15,8 +15,8 @@ class BollingerVolatilityStrategy(BaseStrategy):
     webhook_key: str = "bollinger_vol"
     group: str = "volatility"
 
-    def run(self) -> list[str]:
-        symbols = self.engine.get_local_symbols()
+    def run(self, stock_code_list: list[str]) -> list[str]:
+        symbols = stock_code_list
         selected: list[str] = []
         for symbol in symbols:
             try:
