@@ -7,6 +7,7 @@ on:
 jobs:
   run-sequoia:
     runs-on: ubuntu-24.04
+    timeout-minutes: 90
     env:
       FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
       FEISHU_SUMMARY_WEBHOOK: ${{ secrets.FEISHU_SUMMARY_WEBHOOK }}
