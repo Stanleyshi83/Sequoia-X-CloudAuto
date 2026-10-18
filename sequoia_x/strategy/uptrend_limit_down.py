@@ -4,6 +4,7 @@ from sequoia_x.core.logger import get_logger
 from sequoia_x.strategy.base import BaseStrategy
 logger = get_logger(__name__)
 
+
 class UptrendLimitDownStrategy(BaseStrategy):
     """上升趋势跌停策略。
     选股条件（向量化，严禁 iterrows）：
@@ -18,13 +19,13 @@ class UptrendLimitDownStrategy(BaseStrategy):
     group: str = "bottom_reversal"
     _MIN_BARS: int = 60  # 至少需要 60 根 K 线（60日均线）
 
-    def run(self) -> list[str]:
+    def run(self, stock_code_list: list[str]) -> list[str]:
         """
         遍历全市场，返回满足上升趋势跌停条件的股票代码列表。
         Returns:
             满足条件的股票代码列表。
         """
-        symbols = self.engine.get_local_symbols()
+        symbols = stock_code_list
         selected: list[str] = []
         for symbol in symbols:
             try:
