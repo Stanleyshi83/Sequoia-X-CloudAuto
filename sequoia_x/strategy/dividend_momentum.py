@@ -1,8 +1,12 @@
-"""股息动量价值复合策略：整合ashare-quant-strategies 策略28/95/115。"""
+"""股息动量价值复合策略：整合ashare‑quant‑strategies 策略28/95/115。"""
 import pandas as pd
 from sequoia_x.core.logger import get_logger
 from sequoia_x.strategy.base import BaseStrategy
 logger = get_logger(__name__)
+
+# 模块级内存缓存：避免两个高股息策略重复请求同一只股票分红数据
+_dividend_cache = dict()
+
 
 class DividendMomentumStrategy(BaseStrategy):
     """股息动量价值复合策略。
@@ -19,7 +23,7 @@ class DividendMomentumStrategy(BaseStrategy):
     _MIN_TURNOVER: int = 80000000
     _MIN_PRICE: float = 3.0
 
-    def run(self) -> list[str]:
+    def run(self, stock_code_list: list[str]) -> list[str]:
         """遍历全市场标的，筛选股息+动量+价值复合条件股票代码列表。"""
         try:
             import akshare as ak
@@ -27,7 +31,7 @@ class DividendMomentumStrategy(BaseStrategy):
             logger.error(f"DividendMomentumStrategy 导入akshare失败：{exc}")
             return []
         selected_symbols = []
-        stock_list = self.engine.get_all_symbols()
+        stock_list = stock_code_list
         for code in stock_list:
             try:
                 df = self.engine.get_ohlcv(code)
@@ -39,11 +43,16 @@ class DividendMomentumStrategy(BaseStrategy):
                 vol_ma5 = df["volume"].rolling(5).mean().iloc[-1]
                 vol_ma20 = df["volume"].rolling(20).mean().iloc[-1]
 
-                # =========分红接口【全容错，无硬编码任何列名】=========
-                try:
-                    div_df = ak.stock_dividend_cninfo(symbol=code)
-                except Exception:
-                    continue
+                # =========分红接口：优先读取内存缓存，没有再请求akshare=========
+                if code in _dividend_cache:
+                    div_df = _dividend_cache[code]
+                else:
+                    try:
+                        div_df = ak.stock_dividend_cninfo(symbol=code)
+                        _dividend_cache[code] = div_df
+                    except Exception:
+                        continue
+
                 if div_df is None or div_df.empty:
                     continue
                 # 动态匹配派息列，不写死中文列名
@@ -65,7 +74,6 @@ class DividendMomentumStrategy(BaseStrategy):
                 latest_div_rate = (cash_per_10 / 10.0) / close * 100
                 if latest_div_rate < self._MIN_DIVIDEND_RATE:
                     continue
-
                 # 动量校验：20日收益为正 + 均线多头
                 ret_20 = (close - df["close"].iloc[-20]) / df["close"].iloc[-20]
                 if ret_20 <= 0 or ma20 <= ma60:
