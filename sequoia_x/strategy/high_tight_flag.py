@@ -6,7 +6,6 @@ High Tight Flag (HTF) 高紧旗形策略
 import pandas as pd
 from sequoia_x.strategy.base import BaseStrategy
 from sequoia_x.core.logger import get_logger
-
 logger = get_logger(__name__)
 
 
@@ -14,17 +13,16 @@ class HighTightFlagStrategy(BaseStrategy):
     group: str = "momentum_break"
     webhook_key: str = "htf"
 
-    def run(self) -> list[str]:
+    def run(self, stock_code_list: list[str]) -> list[str]:
         selected_codes: list[str] = []
-        # 获取全市场股票列表
-        stock_list = self.engine.get_all_symbols()
+        # 使用外部传入股票列表，不再内部调用engine获取
+        stock_list = stock_code_list
         for code in stock_list:
             # 获取近60根日线K线，接口替换 get_kline → get_ohlcv
             df = self.engine.get_ohlcv(code)
             if df is None or len(df) < 60:
                 continue
             df = df.reset_index(drop=True)
-
             # ========== 原生HTF核心条件 ==========
             # 条件1：前期出现大幅上涨旗杆（20日内涨幅>=60%）
             high_20 = df["high"].iloc[-40:-20].max()
@@ -53,4 +51,5 @@ class HighTightFlagStrategy(BaseStrategy):
                 continue
             # 全部条件满足，入选
             selected_codes.append(code)
+        logger.info(f"HighTightFlagStrategy 选出 {len(selected_codes)} 只股票")
         return selected_codes
