@@ -3,6 +3,7 @@ from sequoia_x.core.logger import get_logger
 from sequoia_x.strategy.base import BaseStrategy
 logger = get_logger(__name__)
 
+
 class VolumePriceDivergenceStrategy(BaseStrategy):
     """量价底背离反转：价格创20日新低，成交量不再创新低，站上60日均线
     Attributes:
@@ -11,8 +12,9 @@ class VolumePriceDivergenceStrategy(BaseStrategy):
     """
     webhook_key: str = "vol_price_div"
     group: str = "bottom_reversal"
-    def run(self) -> list[str]:
-        symbols = self.engine.get_local_symbols()
+
+    def run(self, stock_code_list: list[str]) -> list[str]:
+        symbols = stock_code_list
         selected: list[str] = []
         for symbol in symbols:
             try:
