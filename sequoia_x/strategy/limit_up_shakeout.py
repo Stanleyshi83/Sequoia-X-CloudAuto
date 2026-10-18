@@ -4,6 +4,7 @@ from sequoia_x.core.logger import get_logger
 from sequoia_x.strategy.base import BaseStrategy
 logger = get_logger(__name__)
 
+
 class LimitUpShakeoutStrategy(BaseStrategy):
     """涨停洗盘策略。
     选股条件（向量化，严禁 iterrows）：
@@ -19,13 +20,13 @@ class LimitUpShakeoutStrategy(BaseStrategy):
     group: str = "strong_shakeout"
     _MIN_BARS: int = 3  # 至少需要 3 根 K 线（前日、昨日、今日）
 
-    def run(self) -> list[str]:
+    def run(self, stock_code_list: list[str]) -> list[str]:
         """
         遍历全市场，返回满足涨停洗盘条件的股票代码列表。
         Returns:
             满足条件的股票代码列表。
         """
-        symbols = self.engine.get_local_symbols()
+        symbols = stock_code_list
         selected: list[str] = []
         for symbol in symbols:
             try:
