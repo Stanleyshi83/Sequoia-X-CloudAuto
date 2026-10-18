@@ -5,6 +5,7 @@ from sequoia_x.core.logger import get_logger
 from sequoia_x.strategy.base import BaseStrategy
 logger = get_logger(__name__)
 
+
 class PrivatePlacementStrategy(BaseStrategy):
     """定增公告监控策略。
     数据源：akshare stock_qbzf_em()（东方财富-全部增发）
@@ -17,8 +18,10 @@ class PrivatePlacementStrategy(BaseStrategy):
     group: str = "event"
     _LOOKBACK_DAYS: int = 7  # 回看天数，覆盖一周内的新公告
 
-    def run(self) -> list[str]:
-        """拉取定增公告，返回近期有定向增发的股票代码列表。"""
+    def run(self, stock_code_list: list[str]) -> list[str]:
+        """拉取定增公告，返回近期有定向增发的股票代码列表。
+        注：该策略为公告接口，不循环遍历传入股票列表，stock_code_list 参数仅为适配统一接口签名。
+        """
         try:
             import akshare as ak
             df = ak.stock_qbzf_em()
