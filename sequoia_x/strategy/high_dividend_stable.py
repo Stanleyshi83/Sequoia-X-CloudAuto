@@ -1,8 +1,12 @@
-"""高股息稳健优选策略：整合ashare-quant-strategies 策略6/81/103。"""
+"""高股息稳健优选策略：整合ashare‑quant‑strategies 策略6/81/103。"""
 import pandas as pd
 from sequoia_x.core.logger import get_logger
 from sequoia_x.strategy.base import BaseStrategy
 logger = get_logger(__name__)
+
+# 和 DividendMomentumStrategy 共用同一个模块级内存缓存，避免重复请求分红接口
+from sequoia_x.strategy.dividend_momentum import _dividend_cache
+
 
 class HighDividendStableStrategy(BaseStrategy):
     """高股息稳健优选策略。
@@ -20,7 +24,7 @@ class HighDividendStableStrategy(BaseStrategy):
     _MIN_TURNOVER: int = 50000000  # 最低日均成交额
     _MIN_PRICE: float = 2.0    # 最低股价
 
-    def run(self) -> list[str]:
+    def run(self, stock_code_list: list[str]) -> list[str]:
         """遍历全市场标的，筛选满足高股息+低波动稳健条件股票代码列表。"""
         try:
             import akshare as ak
@@ -28,7 +32,7 @@ class HighDividendStableStrategy(BaseStrategy):
             logger.error(f"HighDividendStableStrategy 导入akshare失败：{exc}")
             return []
         selected_symbols = []
-        stock_list = self.engine.get_all_symbols()
+        stock_list = stock_code_list
         for code in stock_list:
             try:
                 df = self.engine.get_ohlcv(code)
@@ -46,12 +50,16 @@ class HighDividendStableStrategy(BaseStrategy):
                 if vol_120 > self._MAX_VOL:
                     continue
 
-                # ==========分红接口【全容错改造，无硬编码列名】==========
-                try:
-                    div_df = ak.stock_dividend_cninfo(symbol=code)
-                except Exception:
-                    # 接口访问失败直接跳过这只票
-                    continue
+                # ==========分红接口：优先读取全局内存缓存，没有才发起网络请求==========
+                if code in _dividend_cache:
+                    div_df = _dividend_cache[code]
+                else:
+                    try:
+                        div_df = ak.stock_dividend_cninfo(symbol=code)
+                        _dividend_cache[code] = div_df
+                    except Exception:
+                        continue
+
                 if div_df is None or div_df.empty:
                     continue
                 # 动态查找派息相关列（兼容不同akshare版本列名）
