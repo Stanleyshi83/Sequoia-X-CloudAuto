@@ -3,10 +3,8 @@ import pandas as pd
 from sequoia_x.core.logger import get_logger
 from sequoia_x.strategy.base import BaseStrategy
 logger = get_logger(__name__)
-
 # 和 DividendMomentumStrategy 共用同一个模块级内存缓存，避免重复请求分红接口
 from sequoia_x.strategy.dividend_momentum import _dividend_cache
-
 
 class HighDividendStableStrategy(BaseStrategy):
     """高股息稳健优选策略。
@@ -23,7 +21,6 @@ class HighDividendStableStrategy(BaseStrategy):
     _MAX_VOL: float = 0.025    # 120日波动率上限
     _MIN_TURNOVER: int = 50000000  # 最低日均成交额
     _MIN_PRICE: float = 2.0    # 最低股价
-
     def run(self, stock_code_list: list[str]) -> list[str]:
         """遍历全市场标的，筛选满足高股息+低波动稳健条件股票代码列表。"""
         try:
@@ -49,17 +46,8 @@ class HighDividendStableStrategy(BaseStrategy):
                 vol_120 = df["daily_return"].iloc[-120:].std()
                 if vol_120 > self._MAX_VOL:
                     continue
-
-                # ==========分红接口：优先读取全局内存缓存，没有才发起网络请求==========
-                if code in _dividend_cache:
-                    div_df = _dividend_cache[code]
-                else:
-                    try:
-                        div_df = ak.stock_dividend_cninfo(symbol=code)
-                        _dividend_cache[code] = div_df
-                    except Exception:
-                        continue
-
+                # ========== 直接读取全局缓存，移除本文件内akshare网络请求逻辑 ==========
+                div_df = _dividend_cache.get(code)
                 if div_df is None or div_df.empty:
                     continue
                 # 动态查找派息相关列（兼容不同akshare版本列名）
