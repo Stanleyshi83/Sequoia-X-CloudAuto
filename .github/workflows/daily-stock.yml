@@ -4,29 +4,40 @@ on:
     # 北京时间 交易日15:45 = UTC时间 07:45
     - cron: '45 7 * * 1-5'
   workflow_dispatch:
+
 jobs:
   run-sequoia:
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    timeout-minutes: 180  # 临时扩容到3小时，防止被平台强制杀死
     env:
+      # 关闭tqdm进度条，减少日志输出
+      TQDM_DISABLE: 1
+      # akshare网络超时，避免永久挂死
+      AKSHARE_HTTP_TIMEOUT: 15
+      # 策略白名单：为空=全量运行；调试时填写tag逗号分隔，例如 "turtle,ma_volume,rps"
+      RUN_STRATEGY_FILTER: ""
+      # 飞书webhook密钥
       FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
       FEISHU_SUMMARY_WEBHOOK: ${{ secrets.FEISHU_SUMMARY_WEBHOOK }}
       FEISHU_WEBHOOK_TURTLE_TRADE: ${{ secrets.FEISHU_WEBHOOK_TURTLE_TRADE }}
       FEISHU_WEBHOOK_MA_VOLUME: ${{ secrets.FEISHU_WEBHOOK_MA_VOLUME }}
+
     steps:
-      # 保留 lfs: true：下载仓库里的兜底db
       - name: 拉取完整项目代码
         uses: actions/checkout@v4
         with:
           lfs: true
+
       - name: 配置Python环境
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+
       - name: 安装所有第三方依赖
         run: |
-          pip install baostock pandas numpy requests python-dotenv pydantic-settings rich tqdm tenacity akshare
-      # 加载缓存：key每次唯一，确保增量写回
+          pip install baostock pandas numpy requests python-dotenv pydantic-settings rich tqdm tenacity akshare --upgrade
+
+      # 数据库缓存：复用昨日db，避免每日全量重拉数据，大幅缩短耗时
       - name: 加载数据库缓存
         uses: actions/cache@v4
         with:
@@ -34,29 +45,30 @@ jobs:
           key: sequoia-db-${{ github.run_id }}
           restore-keys: |
             sequoia-db-
-      # 兜底判断：仓库db + 缓存db 都没有时才回填（几乎不会发生）
-      - name: 数据回填（仅极端兜底）
+
+      - name: 数据回填（仅兜底）
         run: |
           if [ ! -f "data/sequoia_v2.db" ]; then
-            echo "仓库db和缓存均无，执行全量backfill（极端情况）"
+            echo "仓库db和缓存均无，执行全量backfill"
             python main.py --backfill
           else
-            echo "数据库已就绪（缓存或仓库），跳过回填，直接增量同步快照"
+            echo "数据库已就绪，跳过全量回填，增量同步"
           fi
-      # 运行选股主程序，tee实现：控制台输出 + 同时写入action_log.txt
+
+      # 主程序运行，tee输出日志
       - name: 运行选股主程序
         run: python main.py | tee action_log.txt 2>&1
-      # 生成共振标的Markdown台账，仍然读取action_log.txt
+
       - name: 生成共振标的Markdown台账
         run: python generate_resonance_md.py action_log.txt
-      # 上传日志文件，每次都上传
+
       - name: 上传日志文件
         uses: actions/upload-artifact@v4
         with:
           name: sequoia-log-${{ github.run_id }}
           path: action_log.txt
           if-no-files-found: error
-      # 只有 resonance_today.md 文件存在时，才执行此步骤上传md
+
       - name: 上传Markdown台账（仅文件存在）
         if: ${{ hashFiles('resonance_today.md') != '' }}
         uses: actions/upload-artifact@v4
