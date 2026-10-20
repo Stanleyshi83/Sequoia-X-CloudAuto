@@ -21,7 +21,6 @@ jobs:
       FEISHU_SUMMARY_WEBHOOK: ${{ secrets.FEISHU_SUMMARY_WEBHOOK }}
       FEISHU_WEBHOOK_TURTLE_TRADE: ${{ secrets.FEISHU_WEBHOOK_TURTLE_TRADE }}
       FEISHU_WEBHOOK_MA_VOLUME: ${{ secrets.FEISHU_WEBHOOK_MA_VOLUME }}
-
     steps:
       - name: 拉取完整项目代码
         uses: actions/checkout@v4
@@ -46,13 +45,15 @@ jobs:
           restore-keys: |
             sequoia-db-
 
-      - name: 数据回填（仅兜底）
+      - name: 数据回填 & 增量行情更新【修复版】
         run: |
           if [ ! -f "data/sequoia_v2.db" ]; then
             echo "仓库db和缓存均无，执行全量backfill"
             python main.py --backfill
           else
-            echo "数据库已就绪，跳过全量回填，增量同步"
+            echo "数据库已存在，执行增量同步最新行情"
+            # ========== 如果你的增量参数不是 --update，把这里替换成你真实参数，例如 --update-recent 3 ==========
+            python main.py --update
           fi
 
       # 主程序运行，tee输出日志
