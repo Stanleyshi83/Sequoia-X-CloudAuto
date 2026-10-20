@@ -39,16 +39,6 @@ jobs:
           restore-keys: |
             sequoia-db-
 
-      - name: 数据回填 & 增量行情更新
-        run: |
-          if [ ! -f "data/sequoia_v2.db" ]; then
-            echo "仓库db和缓存均无，执行全量backfill"
-            python main.py --backfill
-          else
-            echo "数据库已存在，执行增量同步最新行情"
-            python main.py --update
-          fi
-
       - name: 运行选股主程序
         run: python main.py | tee action_log.txt 2>&1
 
