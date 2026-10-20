@@ -5,6 +5,7 @@ Sequoia-X V2 main
 2. 每跑完一个策略单独推飞书
 3. 修复webhook URL重复拼接404
 4. 新增：策略耗时计时、策略白名单、关闭tqdm、akshare网络超时，解决CI超时卡死
+5. 【新增】engine.sync_today_bulk() 做日线增量更新，解决读取旧数据库不更新K线问题
 """
 import sys
 import os
@@ -147,6 +148,11 @@ def main():
     # ====== 严格沿用你原版初始化方式，不做改动 ======
     settings = get_settings()
     engine = DataEngine(settings)
+
+    # =====================【关键修复：增量同步今日日线】=====================
+    engine.sync_today_bulk()
+    # ======================================================================
+
     # ====== 全局只加载一次股票列表，所有策略共用 ======
     global_stock_codes = engine.get_all_symbols()
     logger.info(f"全局加载全市场股票共 {len(global_stock_codes)} 只，所有策略共用")
