@@ -4,19 +4,14 @@ on:
     # 北京时间 交易日15:45 = UTC时间 07:45
     - cron: '45 7 * * 1-5'
   workflow_dispatch:
-
 jobs:
   run-sequoia:
     runs-on: ubuntu-24.04
-    timeout-minutes: 180  # 临时扩容到3小时，防止被平台强制杀死
+    timeout-minutes: 180
     env:
-      # 关闭tqdm进度条，减少日志输出
       TQDM_DISABLE: 1
-      # akshare网络超时，避免永久挂死
       AKSHARE_HTTP_TIMEOUT: 15
-      # 策略白名单：为空=全量运行；调试时填写tag逗号分隔，例如 "turtle,ma_volume,rps"
       RUN_STRATEGY_FILTER: ""
-      # 飞书webhook密钥
       FEISHU_WEBHOOK_URL: ${{ secrets.FEISHU_WEBHOOK_URL }}
       FEISHU_SUMMARY_WEBHOOK: ${{ secrets.FEISHU_SUMMARY_WEBHOOK }}
       FEISHU_WEBHOOK_TURTLE_TRADE: ${{ secrets.FEISHU_WEBHOOK_TURTLE_TRADE }}
@@ -26,37 +21,34 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: true
-
       - name: 配置Python环境
         uses: actions/setup-python@v5
         with:
           python-version: '3.10'
-
       - name: 安装所有第三方依赖
         run: |
           pip install baostock pandas numpy requests python-dotenv pydantic-settings rich tqdm tenacity akshare --upgrade
 
-      # 数据库缓存：复用昨日db，避免每日全量重拉数据，大幅缩短耗时
       - name: 加载数据库缓存
         uses: actions/cache@v4
         with:
           path: data
+          # 这里key依然带run_id（本次，用于本次成功后写入）
           key: sequoia-db-${{ github.run_id }}
+          # 重点：restore只匹配前缀，自动捞【上一次成功生成的最新缓存】
           restore-keys: |
             sequoia-db-
 
-      - name: 数据回填 & 增量行情更新【修复版】
+      - name: 数据回填 & 增量行情更新
         run: |
           if [ ! -f "data/sequoia_v2.db" ]; then
             echo "仓库db和缓存均无，执行全量backfill"
             python main.py --backfill
           else
             echo "数据库已存在，执行增量同步最新行情"
-            # ========== 如果你的增量参数不是 --update，把这里替换成你真实参数，例如 --update-recent 3 ==========
             python main.py --update
           fi
 
-      # 主程序运行，tee输出日志
       - name: 运行选股主程序
         run: python main.py | tee action_log.txt 2>&1
 
