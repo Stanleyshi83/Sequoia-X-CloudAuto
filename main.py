@@ -6,7 +6,6 @@ Sequoia-X V2 main
 3. 修复webhook URL重复拼接404
 4. 新增：策略耗时计时、策略白名单、关闭tqdm、akshare网络超时，解决CI超时卡死
 """
-import argparse
 import sys
 import os
 import time
