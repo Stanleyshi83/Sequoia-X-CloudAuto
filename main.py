@@ -6,6 +6,7 @@ Sequoia-X V2 main
 3. 修复webhook URL重复拼接404
 4. 新增：策略耗时计时、策略白名单、关闭tqdm、akshare网络超时，解决CI超时卡死
 5. 【新增】engine.sync_today_bulk() 做日线增量更新，解决读取旧数据库不更新K线问题
+6. 【本次新增改造】跨族共振口径 + MA20乖离/20日涨幅过滤 + 交易标签 + 市值分层风控标记，原有全部逻辑保留
 """
 import sys
 import os
@@ -36,6 +37,17 @@ from sequoia_x.strategy.dividend_momentum import DividendMomentumStrategy
 os.environ["TQDM_DISABLE"] = "1"          # 关闭进度条，减少日志IO
 os.environ["AKSHARE_HTTP_TIMEOUT"] = "15" # akshare请求15秒超时，杜绝卡死
 logger = get_logger(__name__)
+
+# ---------------------- 参数配置区（新增，方便调参，不硬编码） ----------------------
+# 跨族共振、乖离、涨幅过滤阈值
+RESONANCE_MIN_FAMILY = 2
+BIAS20_THRESHOLD = 5.0
+RET20_THRESHOLD = 10.0
+HOT_BIAS_THRESHOLD = 10.0
+MIN_TURNOVER_AMT = 50000000  # 5000万最低成交额过滤
+# 市值分界，单位亿
+CAP_LARGE = 500
+CAP_MID = 100
 
 # ---------------------- 飞书发送工具 ----------------------
 def _resolve_webhook_url(webhook_input: str) -> str:
@@ -95,6 +107,7 @@ def send_summary_to_feishu(all_results: dict,
                             all_tech_intersection: list,
                             strategy_group_map: dict,
                             stock_hit_strategies: dict,
+                            stock_meta: dict,
                             webhook: str) -> bool:
     date_str = date.today().strftime("%Y-%m-%d")
     group_cn_name = {
@@ -106,6 +119,45 @@ def send_summary_to_feishu(all_results: dict,
         "value_defense": "价值防御组"
     }
     content = f"【选股汇总】 {date_str}\n\n"
+
+    # ==========【本次新增：分层输出 精选候选池 / 过热观察池】 ==========
+    qualified_pool = []
+    hot_watch_pool = []
+    for code in cross_group_resonance:
+        meta = stock_meta.get(code, {})
+        qualified_pool.append((code, meta))
+    for g_code_list in group_inner_overlap.values():
+        for code in g_code_list:
+            meta = stock_meta.get(code, {})
+            hot_watch_pool.append((code, meta))
+
+    content += "==== ✅【跨族共振精选候选池｜满足低乖离过滤，等待回踩MA10/MA20，T+10观察窗口】====\n"
+    qualified_codes = [c for c,m in qualified_pool if m.get("qualified", False)]
+    if qualified_codes:
+        for code in sorted(qualified_codes):
+            m = stock_meta.get(code, {})
+            bias20 = m.get("bias20", "N/A")
+            ret20 = m.get("ret20", "N/A")
+            cap_group = m.get("cap_group", "未知市值")
+            strat_list = stock_hit_strategies[code]
+            content += f"{code}｜乖离{bias20:.2f}%｜20日涨幅{ret20:.2f}%｜{cap_group}｜命中：{'、'.join(strat_list)}\n"
+    else:
+        content += "今日无符合低乖离跨族共振标的\n"
+
+    content += "\n==== ⚠️【过热观察池｜同族扎堆 / 高乖离，仅跟踪，不直接买入】====\n"
+    hot_codes = [c for c,m in hot_watch_pool if m.get("hot", True)]
+    if hot_codes:
+        for code in sorted(set(hot_codes)):
+            m = stock_meta.get(code, {})
+            bias20 = m.get("bias20", "N/A")
+            ret20 = m.get("ret20", "N/A")
+            cap_group = m.get("cap_group", "未知市值")
+            strat_list = stock_hit_strategies[code]
+            content += f"{code}｜乖离{bias20:.2f}%｜20日涨幅{ret20:.2f}%｜{cap_group}｜命中：{'、'.join(strat_list)}\n"
+    else:
+        content += "今日无过热标的\n"
+    content += "\n--- 原有汇总信息 ---\n\n"
+
     content += f"💎【🌟10个技术策略同时选中｜终极共振，极高优先级（排除事件定增策略）】共{len(all_tech_intersection)}只：\n"
     if all_tech_intersection:
         content += "标的清单：" + ",".join(sorted(all_tech_intersection)) + "\n标的明细：\n"
@@ -114,7 +166,7 @@ def send_summary_to_feishu(all_results: dict,
     else:
         content += "今日无标的同时满足全部10个技术策略条件\n"
     content += "\n"
-    content += f"💎【🌟跨组共振｜跨不同策略组别同时选出，高优先级】共{len(cross_group_resonance)}只\n"
+    content += f"💎【🌟跨组共振｜跨不同策略组别同时选出】共{len(cross_group_resonance)}只\n"
     if cross_group_resonance:
         content += "标的清单：" + ",".join(sorted(cross_group_resonance)) + "\n标的明细：\n"
         for code in sorted(cross_group_resonance):
@@ -237,7 +289,7 @@ def main():
             cost_sec = round(time.time() - strat_start, 2)
             logger.info(f"策略 {strat_name} 执行总耗时：{cost_sec} 秒")
 
-    # ====== 共振统计（完全沿用原版，一字未改） ======
+    # ====== 共振统计（原版逻辑保留，在此基础上新增指标计算） ======
     stock_hit_strategies = defaultdict(list)
     stock_hit_groups = defaultdict(set)
     for strat_name, code_list in all_strategy_results.items():
@@ -282,7 +334,53 @@ def main():
     all_tech_intersection = list(set.intersection(*tech_sets)) if tech_sets else []
     logger.info(f"【技术策略终极共振】共{len(all_tech_intersection)}只：{all_tech_intersection}")
 
-    # ====== 汇总推送 ======
+    # ==========【本次新增：批量读取K线，计算乖离、20日涨幅、市值分层、过滤标记】 ==========
+    all_candidate_codes = set()
+    all_candidate_codes.update(cross_group_resonance)
+    for clist in group_inner_overlap.values():
+        all_candidate_codes.update(clist)
+
+    stock_meta = dict()
+    for code in all_candidate_codes:
+        try:
+            # 调用engine新增接口获取指标
+            bias20, ret20, cap, turnover = engine.get_stock_bias_cap_turnover(code)
+            # 市值分组
+            if cap >= CAP_LARGE:
+                cap_group = "大盘"
+            elif cap >= CAP_MID:
+                cap_group = "中盘"
+            else:
+                cap_group = "小盘"
+            # 过滤判定
+            qualified = False
+            hot = False
+            if bias20 < BIAS20_THRESHOLD and ret20 < RET20_THRESHOLD and turnover >= MIN_TURNOVER_AMT:
+                qualified = True
+            if bias20 > HOT_BIAS_THRESHOLD:
+                hot = True
+            stock_meta[code] = {
+                "bias20": bias20,
+                "ret20": ret20,
+                "cap": cap,
+                "cap_group": cap_group,
+                "turnover": turnover,
+                "qualified": qualified,
+                "hot": hot
+            }
+        except Exception as e:
+            logger.warning(f"标的 {code} 指标计算失败: {e}")
+            stock_meta[code] = {
+                "bias20": None,
+                "ret20": None,
+                "cap": None,
+                "cap_group": "未知",
+                "turnover": 0,
+                "qualified": False,
+                "hot": False
+            }
+
+    # ====== 汇总推送（传入stock_meta用于分层展示） ======
     summary_webhook = os.environ.get("FEISHU_SUMMARY_WEBHOOK", "")
     if summary_webhook:
         ok = send_summary_to_feishu(
@@ -292,6 +390,7 @@ def main():
             all_tech_intersection,
             strategy_group_map,
             stock_hit_strategies,
+            stock_meta,
             summary_webhook
         )
         logger.info(f"汇总推送结果: {ok}")
