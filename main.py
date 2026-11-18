@@ -1,13 +1,5 @@
-"""
-Sequoia-X V2 main
-基于原版可运行main.py，最小改动：
-1. 全局只加载一次股票列表，传给每个策略run()
-2. 每跑完一个策略单独推飞书
-3. 修复webhook URL重复拼接404
-4. 新增：策略耗时计时、策略白名单、关闭tqdm、akshare网络超时，解决CI超时卡死
-5. 【新增】engine.sync_today_bulk() 做日线增量更新，解决读取旧数据库不更新K线问题
-6. 【本次新增改造】跨族共振口径 + MA20乖离/20日涨幅过滤 + 交易标签 + 市值分层风控标记，原有全部逻辑保留
-"""
+# Sequoia-X V2 main
+# 最小改动：新增5策略族跨族共振口径，旧逻辑完整保留
 import sys
 import os
 import time
@@ -101,6 +93,7 @@ def send_single_strategy_msg(content: str, webhook_key: str) -> bool:
     webhook_raw = os.environ.get(env_name, "") or os.environ.get("FEISHU_WEBHOOK_URL", "")
     return _post_feishu(content, webhook_raw, tag=webhook_key)
 
+# ========== 【改动点1】增加新入参 new_cross_family_resonance ==========
 def send_summary_to_feishu(all_results: dict,
                             cross_group_resonance: list,
                             group_inner_overlap: dict,
@@ -108,6 +101,7 @@ def send_summary_to_feishu(all_results: dict,
                             strategy_group_map: dict,
                             stock_hit_strategies: dict,
                             stock_meta: dict,
+                            new_cross_family_resonance: list,
                             webhook: str) -> bool:
     date_str = date.today().strftime("%Y-%m-%d")
     group_cn_name = {
@@ -120,10 +114,11 @@ def send_summary_to_feishu(all_results: dict,
     }
     content = f"【选股汇总】 {date_str}\n\n"
 
-    # ==========【本次新增：分层输出 精选候选池 / 过热观察池】 ==========
+    # ==========【改动点2】顶部精选池切换为新族共振数据源 new_cross_family_resonance ==========
     qualified_pool = []
     hot_watch_pool = []
-    for code in cross_group_resonance:
+    # 新口径跨族共振池替换原有cross_group_resonance
+    for code in new_cross_family_resonance:
         meta = stock_meta.get(code, {})
         qualified_pool.append((code, meta))
     for g_code_list in group_inner_overlap.values():
@@ -156,8 +151,9 @@ def send_summary_to_feishu(all_results: dict,
             content += f"{code}｜乖离{bias20:.2f}%｜20日涨幅{ret20:.2f}%｜{cap_group}｜命中：{'、'.join(strat_list)}\n"
     else:
         content += "今日无过热标的\n"
-    content += "\n--- 原有汇总信息 ---\n\n"
+    content += "\n--- 原有汇总信息（旧分组口径） ---\n\n"
 
+    # ========== 下方全部旧汇总内容完全原样保留，无任何修改 ==========
     content += f"💎【🌟10个技术策略同时选中｜终极共振，极高优先级（排除事件定增策略）】共{len(all_tech_intersection)}只：\n"
     if all_tech_intersection:
         content += "标的清单：" + ",".join(sorted(all_tech_intersection)) + "\n标的明细：\n"
@@ -166,7 +162,7 @@ def send_summary_to_feishu(all_results: dict,
     else:
         content += "今日无标的同时满足全部10个技术策略条件\n"
     content += "\n"
-    content += f"💎【🌟跨组共振｜跨不同策略组别同时选出】共{len(cross_group_resonance)}只\n"
+    content += f"💎【🌟跨组共振｜旧业务分组口径】共{len(cross_group_resonance)}只\n"
     if cross_group_resonance:
         content += "标的清单：" + ",".join(sorted(cross_group_resonance)) + "\n标的明细：\n"
         for code in sorted(cross_group_resonance):
@@ -209,6 +205,7 @@ def main():
     global_stock_codes = engine.get_all_symbols()
     logger.info(f"全局加载全市场股票共 {len(global_stock_codes)} 只，所有策略共用")
 
+    # 旧业务分组映射（完全保留，不作修改）
     strategy_group_map = {
         "RsiOversoldStrategy": "bottom_reversal",
         "UptrendLimitDownStrategy": "bottom_reversal",
@@ -223,6 +220,28 @@ def main():
         "PrivatePlacementStrategy": "event",
         "HighDividendStableStrategy": "value_defense",
         "DividendMomentumStrategy": "value_defense"
+    }
+
+    # ==========【改动点3】新增独立5大策略族映射（和旧分组完全隔离） ==========
+    strategy_family_map = {
+        # 1.趋势突破族
+        "BoxBreakoutStrategy": "trend_break",
+        "HighTightFlagStrategy": "trend_break",
+        "MaVolumeStrategy": "trend_break",
+        "RpsBreakoutStrategy": "trend_break",
+        "TurtleTradeStrategy": "trend_break",
+        # 2.均值回归族
+        "RsiOversoldStrategy": "mean_revert",
+        "BollingerVolatilityStrategy": "mean_revert",
+        "VolumePriceDivergenceStrategy": "mean_revert",
+        # 3.量价异动族
+        "LimitUpShakeoutStrategy": "price_volume_shock",
+        "UptrendLimitDownStrategy": "price_volume_shock",
+        # 4.红利基本面族
+        "HighDividendStableStrategy": "dividend_fundamental",
+        "DividendMomentumStrategy": "dividend_fundamental",
+        # 5.事件族
+        "PrivatePlacementStrategy": "event"
     }
 
     strategy_cls_list = [
@@ -289,7 +308,9 @@ def main():
             cost_sec = round(time.time() - strat_start, 2)
             logger.info(f"策略 {strat_name} 执行总耗时：{cost_sec} 秒")
 
-    # ====== 共振统计（原版逻辑保留，在此基础上新增指标计算） ======
+    # ==============================================
+    # 【原有旧共振统计逻辑：完全原样保留，不修改一行】
+    # ==============================================
     stock_hit_strategies = defaultdict(list)
     stock_hit_groups = defaultdict(set)
     for strat_name, code_list in all_strategy_results.items():
@@ -309,7 +330,7 @@ def main():
                 g = list(group_set)[0]
                 group_inner_overlap[g].append(stock_code)
 
-    logger.info(f"【跨组共振】共{len(cross_group_resonance)}只：{cross_group_resonance}")
+    logger.info(f"【旧口径-跨组共振】共{len(cross_group_resonance)}只：{cross_group_resonance}")
     for g_name, code_list in group_inner_overlap.items():
         logger.info(f"分组【{g_name}】组内重合({len(code_list)}只): {sorted(code_list)}")
 
@@ -334,9 +355,26 @@ def main():
     all_tech_intersection = list(set.intersection(*tech_sets)) if tech_sets else []
     logger.info(f"【技术策略终极共振】共{len(all_tech_intersection)}只：{all_tech_intersection}")
 
+    # ==============================================
+    # 【改动点4：全新新增：5策略族共振统计（独立链路，不污染旧变量）】
+    # 规则：同族最多算1票，共振分=跨策略族数量
+    # ==============================================
+    stock_hit_families = defaultdict(set)
+    for strat_name, code_list in all_strategy_results.items():
+        family = strategy_family_map[strat_name]
+        for code in code_list:
+            stock_hit_families[code].add(family)  # 同一个族只保留一次
+
+    # 新口径跨族共振：命中>=2个不同策略族
+    new_cross_family_resonance = [
+        code for code, family_set in stock_hit_families.items()
+        if len(family_set) >= RESONANCE_MIN_FAMILY
+    ]
+    logger.info(f"【新口径-跨策略族共振】共{len(new_cross_family_resonance)}只：{new_cross_family_resonance}")
+
     # ==========【本次新增：批量读取K线，计算乖离、20日涨幅、市值分层、过滤标记】 ==========
     all_candidate_codes = set()
-    all_candidate_codes.update(cross_group_resonance)
+    all_candidate_codes.update(new_cross_family_resonance)  # 候选池改用新共振标的
     for clist in group_inner_overlap.values():
         all_candidate_codes.update(clist)
 
@@ -380,7 +418,7 @@ def main():
                 "hot": False
             }
 
-    # ====== 汇总推送（传入stock_meta用于分层展示） ======
+    # ======【改动点5：调用汇总函数，把新共振变量传入】 ======
     summary_webhook = os.environ.get("FEISHU_SUMMARY_WEBHOOK", "")
     if summary_webhook:
         ok = send_summary_to_feishu(
@@ -391,6 +429,7 @@ def main():
             strategy_group_map,
             stock_hit_strategies,
             stock_meta,
+            new_cross_family_resonance,  # 新增入参
             summary_webhook
         )
         logger.info(f"汇总推送结果: {ok}")
