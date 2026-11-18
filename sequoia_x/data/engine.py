@@ -332,6 +332,32 @@ class DataEngine:
 
         logger.info(f"回填完成 — 成功: {success} | 跳过: {skipped} | 失败: {failed}")
 
+    def get_stock_bias_cap_turnover(self, symbol: str):
+        """
+        新增接口：计算MA20乖离、20日涨跌幅、取当日成交额
+        注：baostock免费接口不支持实时市值，这里采用简化方案：
+        仅计算K线衍生指标（bias20、ret20、turnover）；cap返回0，main里cap_group标记为【暂未获取】
+        后续你想接入市值数据源再扩展此处，不影响主流程。
+        返回：(bias20, ret20, cap, turnover)
+        """
+        df = self.get_ohlcv(symbol)
+        if len(df) < 20:
+            raise ValueError(f"{symbol} K线不足20根，无法计算指标")
+        df = df.sort_values("date", ascending=True).reset_index(drop=True)
+        df["ma20"] = df["close"].rolling(window=20).mean()
+        latest = df.iloc[-1]
+        close_now = float(latest["close"])
+        ma20_val = float(latest["ma20"])
+        bias20 = ((close_now - ma20_val) / ma20_val) * 100
+
+        # 20日前收盘价
+        close_20ago = float(df.iloc[-20]["close"])
+        ret20 = ((close_now - close_20ago) / close_20ago) * 100
+
+        turnover = float(latest["turnover"])
+        cap = 0
+        return bias20, ret20, cap, turnover
+
     # ── 股票列表 ──
 
     def get_all_symbols(self) -> list[str]:
