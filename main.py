@@ -128,7 +128,9 @@ def send_summary_to_feishu(all_results: dict,
 
     content += "==== ✅【跨族共振精选候选池｜满足低乖离过滤，等待回踩MA10/MA20，T+10观察窗口】====\n"
     qualified_codes = [c for c,m in qualified_pool if m.get("qualified", False)]
+    # 新增：标的清单一行
     if qualified_codes:
+        content += "标的清单：" + ",".join(sorted(qualified_codes)) + "\n"
         for code in sorted(qualified_codes):
             m = stock_meta.get(code, {})
             bias20 = m.get("bias20", "N/A")
@@ -137,12 +139,14 @@ def send_summary_to_feishu(all_results: dict,
             strat_list = stock_hit_strategies[code]
             content += f"{code}｜乖离{bias20:.2f}%｜20日涨幅{ret20:.2f}%｜{cap_group}｜命中：{'、'.join(strat_list)}\n"
     else:
-        content += "今日无符合低乖离跨族共振标的\n"
+        content += "标的清单：无\n今日无符合低乖离跨族共振标的\n"
 
     content += "\n==== ⚠️【过热观察池｜同族扎堆 / 高乖离，仅跟踪，不直接买入】====\n"
-    hot_codes = [c for c,m in hot_watch_pool if m.get("hot", True)]
+    hot_codes = sorted(set([c for c,m in hot_watch_pool if m.get("hot", True)]))
+    # 新增：标的清单一行
     if hot_codes:
-        for code in sorted(set(hot_codes)):
+        content += "标的清单：" + ",".join(hot_codes) + "\n"
+        for code in hot_codes:
             m = stock_meta.get(code, {})
             bias20 = m.get("bias20", "N/A")
             ret20 = m.get("ret20", "N/A")
@@ -150,7 +154,7 @@ def send_summary_to_feishu(all_results: dict,
             strat_list = stock_hit_strategies[code]
             content += f"{code}｜乖离{bias20:.2f}%｜20日涨幅{ret20:.2f}%｜{cap_group}｜命中：{'、'.join(strat_list)}\n"
     else:
-        content += "今日无过热标的\n"
+        content += "标的清单：无\n今日无过热标的\n"
     content += "\n--- 原有汇总信息（旧分组口径） ---\n\n"
 
     # ========== 下方全部旧汇总内容完全原样保留，无任何修改 ==========
